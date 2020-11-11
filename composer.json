@@ -8,7 +8,9 @@
             "email": "xjryanse@sina.com"
         }
     ],
-    "require": {},
+    "require": {
+        "xjryanse/finance": "0.0.*"
+    },    
     "license": "MIT",
     "autoload": {
         "psr-4": {
