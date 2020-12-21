@@ -40,11 +40,12 @@ class OrderIncomeDistributeService {
             throw new Exception('超出订单已付金额，不可分润');
         }
         //拼接数据
-        $data['order_id'] = $orderId;
-        $data['order_type'] = $info['order_type'];
-        $data['distri_key'] = $distriKey;
-        $data['distri_prize'] = $distriPrize;
-        $data['owner_id'] = $ownerId;
+        $data['order_id']       = $orderId;
+        $data['order_type']     = $info['order_type'];
+        $data['distri_key']     = $distriKey;
+        $data['distri_prize']   = $distriPrize;
+        $data['distri_prize']   = $distriPrize;
+        $data['distri_status']  = XJRYANSE_OP_TODO;  //待分派
         //写入表
         $res = self::save($data);
         //更新钱

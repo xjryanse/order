@@ -39,7 +39,11 @@ class OrderLogic
             throw new Exception('订单不存在');
         }
         $prizeInfo = GoodsPrizeService::getByGoodsAndPrizeKey( $orderInfo['goods_id'], $prizeKey );
+
+        $data['distri_reason']  = $prizeInfo['prize_name'];
+        $data['partin_role']    = $prizeInfo['belong_role'];
+        $data['owner_id']       = $prizeInfo['belong_user_id'];
         //商品id，价格key，价格，归属用户id
-        return OrderIncomeDistributeService::newDistribute($orderInfo['goods_id'], $prizeKey, $prizeInfo['prize'], $prizeInfo['belong_user_id']);
+        return OrderIncomeDistributeService::newDistribute($orderId, $prizeKey, $prizeInfo['prize'], $prizeInfo['belong_user_id'],$data);
     }    
 }
