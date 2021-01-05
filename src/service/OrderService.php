@@ -3,7 +3,10 @@
 namespace xjryanse\order\service;
 
 use xjryanse\order\service\OrderIncomeDistributeService;
+use xjryanse\order\service\OrderFlowNodeService;
+use xjryanse\goods\service\GoodsService;
 
+use xjryanse\logic\DataCheck;
 /**
  * 订单总表
  */
@@ -11,9 +14,49 @@ class OrderService {
 
     use \xjryanse\traits\InstTrait;
     use \xjryanse\traits\MainModelTrait;
+    use \xjryanse\traits\SubServiceTrait;    
 
     protected static $mainModel;
     protected static $mainModelClass = '\\xjryanse\\order\\model\\Order';
+    
+    public static function save(array $data) {
+        self::checkTransaction();
+        //数据校验
+        DataCheck::must($data, ['goods_id']);
+        $data['order_type'] = GoodsService::getInstance( $data['goods_id'])->fSaleType();
+        $data['shop_id']    = GoodsService::getInstance( $data['goods_id'])->fShopId();
+        //订单保存
+        $res = self::commSave( $data );
+        //写入订单子表
+        $subService = self::getSubService( $data['order_type'] );
+        if( class_exists($subService) ){
+            $subRes = $subService::save( $res ? $res->toArray() : [] );
+        }
+        return $res;
+    }
+    
+    
+    /**
+     * 分页的查询
+     * @param type $con
+     * @param type $order
+     * @param type $perPage
+     * @return type
+     */
+    public static function paginate( $con = [],$order='',$perPage=10)
+    {
+        $conAll = array_merge( $con ,self::commCondition() );
+
+        $res = self::mainModel()->where( $conAll )->order($order)->cache(2)
+                ->paginate( intval($perPage) )
+                ->each(function($item, $key){
+                    //添加分表数据:按类型提取分表服务类
+                    self::addSubData( $item, $item->order_type );
+                    //订单末条流程
+                    $item->orderLastFlowNode = OrderFlowNodeService::orderLastFlow( $item->id );
+                });
+        return $res ? $res->toArray() : [] ;        
+    }
 
     /**
      * 退款校验
@@ -31,7 +74,6 @@ class OrderService {
         $distriPrize = OrderIncomeDistributeService::getOrderDistriPrize($orderId);
         return self::getInstance($orderId)->update(['distri_prize' => $distriPrize]);
     }
-
     /**
      *
      */
