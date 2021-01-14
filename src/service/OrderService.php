@@ -5,8 +5,9 @@ namespace xjryanse\order\service;
 use xjryanse\order\service\OrderIncomeDistributeService;
 use xjryanse\order\service\OrderFlowNodeService;
 use xjryanse\goods\service\GoodsService;
-
+use xjryanse\order\logic\FlowNodeLogic;
 use xjryanse\logic\DataCheck;
+use xjryanse\logic\DbOperate;
 /**
  * 订单总表
  */
@@ -19,43 +20,55 @@ class OrderService {
     protected static $mainModel;
     protected static $mainModelClass = '\\xjryanse\\order\\model\\Order';
     
+    /**
+     * 额外详情信息
+     */
+    protected static function extraDetail( &$item ,$uuid )
+    {
+        //添加分表数据:按类型提取分表服务类
+        self::addSubData( $item, $item['order_type'] );
+        //goodsId提取商品来源表的数据
+        if(isset($item['goods_id']) && $item['goods_id']){
+            $goodsTable     = GoodsService::getInstance($item['goods_id'])->fGoodsTable();
+            $goodsTableId   = GoodsService::getInstance($item['goods_id'])->fGoodsTableId();
+            $goodsService   = DbOperate::getService($goodsTable);
+//            dump( $goodsTable.'-'.$goodsTableId );
+            //添加商品详情信息
+            self::addSubServiceData($item, $goodsService, $goodsTableId);
+        }
+
+        //订单末条流程
+        $item['orderLastFlowNode'] = OrderFlowNodeService::orderLastFlow( $uuid );
+        return $item;
+    }
+    
     public static function save(array $data) {
         self::checkTransaction();
         //数据校验
         DataCheck::must($data, ['goods_id']);
         $data['order_type'] = GoodsService::getInstance( $data['goods_id'])->fSaleType();
         $data['shop_id']    = GoodsService::getInstance( $data['goods_id'])->fShopId();
-        //订单保存
+        //订单状态:默认为待支付
+        $data['order_status'] = isset($data['order_status']) ? $data['order_status'] : ORDER_NEEDPAY;
+        //①订单保存
         $res = self::commSave( $data );
-        //写入订单子表
+        
+        //②写入订单子表
         $subService = self::getSubService( $data['order_type'] );
         if( class_exists($subService) ){
-            $subRes = $subService::save( $res ? $res->toArray() : [] );
+            $subService::save( $res ? $res->toArray() : [] );
         }
-        return $res;
-    }
-    
-    
-    /**
-     * 分页的查询
-     * @param type $con
-     * @param type $order
-     * @param type $perPage
-     * @return type
-     */
-    public static function paginate( $con = [],$order='',$perPage=10)
-    {
-        $conAll = array_merge( $con ,self::commCondition() );
+        
+        //③写入流程表
+        $nodeName = camelize($data['order_type']).'BuyerOrder' ;//订单类型+买家下单
+        $flowData = [
+            'finish_time'       =>date('Y-m-d H:i:s'),
+            'operate_user_id'   =>$res['creater'],
+        ];
+        //④写入流程
+        FlowNodeLogic::addFlow($res['id'], $nodeName, '买家下单', 'buyer', 'finish',$flowData);
 
-        $res = self::mainModel()->where( $conAll )->order($order)->cache(2)
-                ->paginate( intval($perPage) )
-                ->each(function($item, $key){
-                    //添加分表数据:按类型提取分表服务类
-                    self::addSubData( $item, $item->order_type );
-                    //订单末条流程
-                    $item->orderLastFlowNode = OrderFlowNodeService::orderLastFlow( $item->id );
-                });
-        return $res ? $res->toArray() : [] ;        
+        return $res;
     }
 
     /**

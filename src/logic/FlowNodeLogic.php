@@ -18,6 +18,13 @@ class FlowNodeLogic
     use \xjryanse\traits\DebugTrait;
     /**
      * 给订单添加流程
+     * @param type $orderId     订单id
+     * @param type $nodeKey     节点key
+     * @param type $nodeName    节点名称
+     * @param type $operateRole 操作角色
+     * @param type $flowStatus  流程状态
+     * @param array $data
+     * @return type
      */
     public static function addFlow( $orderId ,$nodeKey,$nodeName,$operateRole, $flowStatus='todo',array $data=[])
     {
@@ -146,12 +153,12 @@ class FlowNodeLogic
     private static function setOrderStatusByNode($orderId,$nodeKey = "")
     {
         //订单完成
-        if($nodeKey == ORDER_FINISH){
-            OnProcessLogic::getInstance( $orderId )->setOrderStatus( YDZB_ORDER_FINISH );
+        if($nodeKey == ORDER_FINISH_NODE){
+            OnProcessLogic::getInstance( $orderId )->setOrderStatus( ORDER_FINISH );
         }
         //交易关闭
-        if($nodeKey == ORDER_CLOSE ){
-            OnProcessLogic::getInstance( $orderId )->setOrderStatus( YDZB_ORDER_CLOSE );
+        if($nodeKey == ORDER_CLOSE_NODE ){
+            OnProcessLogic::getInstance( $orderId )->setOrderStatus( ORDER_CLOSE );
             OnCancelLogic::getInstance( $orderId )->setAllGoodsOnSale();
         }
         //其他情况不做处理
