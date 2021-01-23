@@ -14,6 +14,22 @@ class OrderShoppingCartService {
     protected static $mainModelClass = '\\xjryanse\\order\\model\\OrderShoppingCart';
 
     /**
+     * 使购物车的商品不可用，一般用于有用户下单，或者商品下架时使用
+     */
+    public static function invalid( $goodsId )
+    {
+        return self::mainModel()->where('goods_id',$goodsId)->update(['is_valid'=>0]);
+    }
+    /*
+     * 删除指定用户指定商品：一般用于下单后清除购物车
+     */
+    public static function delUserGoods( $goodsId,$userId )
+    {
+        $con[] = ['goods_id','=',$goodsId];
+        $con[] = ['user_id' ,'=',$userId ];
+        return self::mainModel()->where( $con )->delete();
+    }
+    /**
      *
      */
     public function fId() {

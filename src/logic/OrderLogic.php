@@ -1,8 +1,6 @@
 <?php
 namespace xjryanse\order\logic;
 
-use xjryanse\finance\service\FinanceIncomeOrderService;
-use xjryanse\finance\service\FinanceRefundService;
 use xjryanse\order\service\OrderIncomeDistributeService;
 use xjryanse\goods\service\GoodsPrizeService;
 use xjryanse\order\service\OrderService;
@@ -18,14 +16,8 @@ class OrderLogic
      */
     public static function financeSync( $orderId )
     {
-        //已支付订单金额
-        $paiedMoney = FinanceIncomeOrderService::getOrderMoney($orderId);
-        $refundMoney = FinanceRefundService::getOrderMoney($orderId);
-        
-        $data['pay_prize']      = $paiedMoney;
-        $data['refund_prize']   = $refundMoney;
-        
-        return OrderService::getInstance( $orderId )->update( $data );
+        //封装在存储过程中：20210119
+        return false;
     }
     /**
      * 分润

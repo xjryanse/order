@@ -19,13 +19,17 @@ class OrderService {
 
     protected static $mainModel;
     protected static $mainModelClass = '\\xjryanse\\order\\model\\Order';
-    
+
     /**
      * 额外详情信息
      */
     protected static function extraDetail( &$item ,$uuid )
     {
+//        return false;
         //添加分表数据:按类型提取分表服务类
+        if(!$item){
+            return false;
+        }
         self::addSubData( $item, $item['order_type'] );
         //goodsId提取商品来源表的数据
         if(isset($item['goods_id']) && $item['goods_id']){
@@ -40,6 +44,19 @@ class OrderService {
         //订单末条流程
         $item['orderLastFlowNode'] = OrderFlowNodeService::orderLastFlow( $uuid );
         return $item;
+    }
+    
+    /**
+     * 额外输入信息
+     */
+    public static function extraAfterSave(&$data, $uuid) {
+        $goodsId                    = self::getInstance($uuid)->fGoodsId();
+        $updData['goods_name']      = GoodsService::getInstance( $goodsId )->fGoodsName();
+        $updData['goods_table']     = GoodsService::getInstance( $goodsId )->fGoodsTable();
+        $updData['goods_table_id']  = GoodsService::getInstance( $goodsId )->fGoodsTable();
+        $con[] = ['id','=',$uuid];
+        self::mainModel()->where($con)->update($updData);
+        return $data;
     }
     
     public static function save(array $data) {
