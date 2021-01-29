@@ -39,6 +39,11 @@ class OrderService {
 //            dump( $goodsTable.'-'.$goodsTableId );
             //添加商品详情信息
             self::addSubServiceData($item, $goodsService, $goodsTableId);
+            if($goodsService){
+                $goodsInfo = $goodsService::getInstance($goodsTableId)->get();
+                //业务员
+                $item['busier_id'] = $goodsInfo && isset($goodsInfo['busier_id']) ? $goodsInfo['busier_id'] : '';
+            }
         }
 
         //订单末条流程
@@ -50,14 +55,34 @@ class OrderService {
      * 额外输入信息
      */
     public static function extraAfterSave(&$data, $uuid) {
+        //交易关闭，重新上架订单
+        if(isset($data['order_status']) && $data['order_status'] == ORDER_CLOSE){
+            $info       = self::getInstance( $uuid )->get();
+            $service    = DbOperate::getService($info['goods_table']);
+            $goodsStatusData['goods_status'] = YDZB_GOODS_ONSALE;
+            if($service::mainModel()->hasField('goods_status')){
+                $service::mainModel()->where('id',$info['goods_table_id'])->update($goodsStatusData);
+            }
+            //订单状态更新为完结
+            $updData['is_complete']      = 1;   //0未完结，1已完结
+        }
+        
         $goodsId                    = self::getInstance($uuid)->fGoodsId();
         $updData['goods_name']      = GoodsService::getInstance( $goodsId )->fGoodsName();
         $updData['goods_table']     = GoodsService::getInstance( $goodsId )->fGoodsTable();
-        $updData['goods_table_id']  = GoodsService::getInstance( $goodsId )->fGoodsTable();
+        $updData['goods_table_id']  = GoodsService::getInstance( $goodsId )->fGoodsTableId();
         $con[] = ['id','=',$uuid];
         self::mainModel()->where($con)->update($updData);
+
         return $data;
     }
+    
+    /**
+     * 额外输入信息
+     */
+    public static function extraAfterUpdate(&$data, $uuid) {
+        return self::extraAfterSave($data, $uuid);
+    }    
     
     public static function save(array $data) {
         self::checkTransaction();
