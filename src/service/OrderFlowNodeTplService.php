@@ -2,6 +2,7 @@
 namespace xjryanse\order\service;
 
 use xjryanse\system\interfaces\MainModelInterface;
+use xjryanse\system\service\SystemConditionService;
 
 /**
  * 订单流程模板
@@ -14,6 +15,18 @@ class OrderFlowNodeTplService implements MainModelInterface
     protected static $mainModel;
     protected static $mainModelClass    = '\\xjryanse\\order\\model\\OrderFlowNodeTpl';
 
+    /**
+     * 额外详情信息
+     */
+    protected static function extraDetail( &$item ,$uuid )
+    {
+        if(!$item){ return false;}
+        //查看有多少个条件
+        $con[] = ['item_key','=',$item['node_key']];
+        $item->SCcondition      = SystemConditionService::count( $con );
+        
+        return $item;
+    }    
     /*
      * 当前节点有几个下级节点
      */

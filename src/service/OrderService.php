@@ -5,9 +5,9 @@ namespace xjryanse\order\service;
 use xjryanse\order\service\OrderIncomeDistributeService;
 use xjryanse\order\service\OrderFlowNodeService;
 use xjryanse\goods\service\GoodsService;
-use xjryanse\order\logic\FlowNodeLogic;
 use xjryanse\logic\DataCheck;
 use xjryanse\logic\DbOperate;
+use Exception;
 /**
  * 订单总表
  */
@@ -30,7 +30,8 @@ class OrderService {
         if(!$item){
             return false;
         }
-        self::addSubData( $item, $item['order_type'] );
+        //20210201性能优化调整
+//        self::addSubData( $item, $item['order_type'] );
         //goodsId提取商品来源表的数据
         if(isset($item['goods_id']) && $item['goods_id']){
             $goodsTable     = GoodsService::getInstance($item['goods_id'])->fGoodsTable();
@@ -38,7 +39,8 @@ class OrderService {
             $goodsService   = DbOperate::getService($goodsTable);
 //            dump( $goodsTable.'-'.$goodsTableId );
             //添加商品详情信息
-            self::addSubServiceData($item, $goodsService, $goodsTableId);
+            //20210201性能优化调整
+//            self::addSubServiceData($item, $goodsService, $goodsTableId);
             if($goodsService){
                 $goodsInfo = $goodsService::getInstance($goodsTableId)->get();
                 //业务员
@@ -73,7 +75,8 @@ class OrderService {
         $updData['goods_table_id']  = GoodsService::getInstance( $goodsId )->fGoodsTableId();
         $con[] = ['id','=',$uuid];
         self::mainModel()->where($con)->update($updData);
-
+        //尝试流程节点的更新
+        OrderFlowNodeService::checkLastNodeFinishAndNext( $uuid );
         return $data;
     }
     
@@ -88,6 +91,10 @@ class OrderService {
         self::checkTransaction();
         //数据校验
         DataCheck::must($data, ['goods_id']);
+        GoodsService::getInstance( $data['goods_id'])->get(0);
+        if(GoodsService::getInstance( $data['goods_id'])->fGoodsStatus() != 'onsale'){
+            throw new Exception('非上架商品不可下单');
+        }
         $data['order_type'] = GoodsService::getInstance( $data['goods_id'])->fSaleType();
         $data['shop_id']    = GoodsService::getInstance( $data['goods_id'])->fShopId();
         //订单状态:默认为待支付
@@ -102,13 +109,8 @@ class OrderService {
         }
         
         //③写入流程表
-        $nodeName = camelize($data['order_type']).'BuyerOrder' ;//订单类型+买家下单
-        $flowData = [
-            'finish_time'       =>date('Y-m-d H:i:s'),
-            'operate_user_id'   =>$res['creater'],
-        ];
-        //④写入流程
-        FlowNodeLogic::addFlow($res['id'], $nodeName, '买家下单', 'buyer', 'finish',$flowData);
+        $nodeKey = camelize($data['order_type']).'BuyerOrder' ;//订单类型+买家下单
+        OrderFlowNodeService::addFlow($res['id'], $nodeKey, '买家下单', 'buyer', $data);
 
         return $res;
     }
