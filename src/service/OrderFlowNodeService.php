@@ -94,12 +94,12 @@ class OrderFlowNodeService {
         //卖家
         if( $operateRole == YDZB_ROLE_CATE_SELLER ){
             $data['operate_user_id'] = $orderInfo['seller_user_id'];
-        }
-        //卖家
-        if( $operateRole == YDZB_ROLE_CATE_BUYER ){
+        } else if( $operateRole == YDZB_ROLE_CATE_BUYER ){
+            //买家
             $data['operate_user_id'] = $orderInfo['user_id'];
+        } else {
+            $data['operate_user_id'] = session(SESSION_USER_ID);
         }
-
         //保存
         $res = self::save( $data );
         return $res;
@@ -150,7 +150,7 @@ class OrderFlowNodeService {
      * @param type $nextNodeKey      下一节点key，适用于多个后续节点选一
      * @return boolean
      */
-    public static function lastNodeFinishAndNext( $orderId,$itemType="order",  $nextNodeKey='',$limitTimes = 10)
+    public static function lastNodeFinishAndNext( $orderId,$itemType="order",  $nextNodeKey='',$limitTimes = 20)
     {
         self::$lastNodeFinishCount = self::$lastNodeFinishCount +1;
         if(self::$lastNodeFinishCount > $limitTimes){

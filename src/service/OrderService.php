@@ -5,8 +5,10 @@ namespace xjryanse\order\service;
 use xjryanse\order\service\OrderIncomeDistributeService;
 use xjryanse\order\service\OrderFlowNodeService;
 use xjryanse\goods\service\GoodsService;
+use xjryanse\goods\service\GoodsPrizeService;
 use xjryanse\logic\DataCheck;
 use xjryanse\logic\DbOperate;
+use xjryanse\logic\Arrays;
 use Exception;
 /**
  * 订单总表
@@ -20,6 +22,16 @@ class OrderService {
     protected static $mainModel;
     protected static $mainModelClass = '\\xjryanse\\order\\model\\Order';
 
+    /**
+     * 额外输入信息
+     */
+    public static function extraPreSave(&$data, $uuid) {
+        if(Arrays::value($data, 'goods_id')){
+            $data['order_prize'] = GoodsPrizeService::totalPrize( Arrays::value($data, 'goods_id') );
+        }
+        return $data;
+    }
+    
     /**
      * 额外详情信息
      */
@@ -93,8 +105,10 @@ class OrderService {
         DataCheck::must($data, ['goods_id']);
         GoodsService::getInstance( $data['goods_id'])->get(0);
         if(GoodsService::getInstance( $data['goods_id'])->fGoodsStatus() != 'onsale'){
-            throw new Exception('非上架商品不可下单');
+            throw new Exception('商品已售空或未上架');
         }
+        
+        $data['seller_user_id'] = GoodsService::getInstance( $data['goods_id'])->fSellerUserId();
         $data['order_type'] = GoodsService::getInstance( $data['goods_id'])->fSaleType();
         $data['shop_id']    = GoodsService::getInstance( $data['goods_id'])->fShopId();
         //订单状态:默认为待支付
@@ -186,7 +200,12 @@ class OrderService {
     public function fOrderType() {
         return $this->getFFieldValue(__FUNCTION__);
     }
-
+    /**
+     * 商品名称
+     */
+    public function fGoodsName() {
+        return $this->getFFieldValue(__FUNCTION__);
+    }
     /**
      * 下单客户类型：customer；personal
      */
