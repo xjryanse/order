@@ -146,6 +146,19 @@ class OrderService {
         return self::getInstance($orderId)->update(['distri_prize' => $distriPrize]);
     }
     /**
+     * 对账单订单关联id
+     * @param type $con
+     * @param type $startTime   2021-01-01 00:00:00
+     * @param type $endTime     2021-01-01 23:59:59
+     */
+    public static function statementOrders( $con , $startTime, $endTime )
+    {
+        $con[] = ['create_time','>=',$startTime];
+        $con[] = ['create_time','<=',$endTime];
+        $res = self::mainModel()->where( $con )->field('id as order_id')->select();
+        return $res ? $res->toArray() : [];
+    }
+    /**
      *
      */
     public function fId() {
