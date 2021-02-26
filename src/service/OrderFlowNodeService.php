@@ -92,11 +92,13 @@ class OrderFlowNodeService {
         //TODO，增加映射条件进行取数据
 
         //卖家
-        if( $operateRole == YDZB_ROLE_CATE_SELLER ){
-            $data['operate_user_id'] = $orderInfo['seller_user_id'];
-        } else if( $operateRole == YDZB_ROLE_CATE_BUYER ){
+        if( $operateRole == 'seller' ){
+            $data['operate_user_id']        = $orderInfo['seller_user_id'];
+            $data['operate_customer_id']    = $orderInfo['seller_customer_id'];
+        } else if( $operateRole == 'buyer' ){
             //买家
-            $data['operate_user_id'] = $orderInfo['user_id'];
+            $data['operate_user_id']        = $orderInfo['user_id'];
+            $data['operate_customer_id']    = $orderInfo['customer_id'];
         } else {
             $data['operate_user_id'] = session(SESSION_USER_ID);
         }

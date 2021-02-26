@@ -73,7 +73,7 @@ class OrderService {
         if(isset($data['order_status']) && $data['order_status'] == ORDER_CLOSE){
             $info       = self::getInstance( $uuid )->get();
             $service    = DbOperate::getService($info['goods_table']);
-            $goodsStatusData['goods_status'] = YDZB_GOODS_ONSALE;
+            $goodsStatusData['goods_status'] = GOODS_ONSALE;
             if($service::mainModel()->hasField('goods_status')){
                 $service::mainModel()->where('id',$info['goods_table_id'])->update($goodsStatusData);
             }
@@ -105,12 +105,12 @@ class OrderService {
         DataCheck::must($data, ['goods_id']);
         GoodsService::getInstance( $data['goods_id'])->get(0);
         if(GoodsService::getInstance( $data['goods_id'])->fGoodsStatus() != 'onsale'){
-            throw new Exception('商品已售空或未上架');
+            throw new Exception('商品已经销售或未上架');
         }
         
         $data['seller_user_id'] = GoodsService::getInstance( $data['goods_id'])->fSellerUserId();
-        $data['order_type'] = GoodsService::getInstance( $data['goods_id'])->fSaleType();
-        $data['shop_id']    = GoodsService::getInstance( $data['goods_id'])->fShopId();
+        $data['order_type']     = GoodsService::getInstance( $data['goods_id'])->fSaleType();
+        $data['shop_id']        = GoodsService::getInstance( $data['goods_id'])->fShopId();
         //订单状态:默认为待支付
         $data['order_status'] = isset($data['order_status']) ? $data['order_status'] : ORDER_NEEDPAY;
         //①订单保存
@@ -334,7 +334,10 @@ class OrderService {
     public function fRefundPrize() {
         return $this->getFFieldValue(__FUNCTION__);
     }
-
+    
+    public function fOutcomePrize() {
+        return $this->getFFieldValue(__FUNCTION__);
+    }    
     /**
      * 已分派金额
      */
