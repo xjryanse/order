@@ -161,7 +161,9 @@ class OrderFlowNodeService {
         //nextNodeKey没有父节点，表示他是可以打断订单流程的节点（比如取消订单，不依赖于其他流程节点）。        
         $lastNode = self::orderLastFlow($orderId);    
         //更新订单的末个节点信息
-        OrderService::mainModel()->where('id', $orderId )->update(['orderLastFlowNode'=>$lastNode['node_key']]);
+        if(self::mainModel()->hasField('orderLastFlowNode')){
+            OrderService::mainModel()->where('id', $orderId )->update(['orderLastFlowNode'=>$lastNode['node_key']]);        
+        }
             Debug::debug('订单：'.$orderId.'末条流程', $lastNode);
         if(!$lastNode || $lastNode['flow_status'] != XJRYANSE_OP_TODO){
             return false;
