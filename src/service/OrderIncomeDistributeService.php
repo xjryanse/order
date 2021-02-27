@@ -17,7 +17,7 @@ class OrderIncomeDistributeService {
     protected static $mainModel;
     protected static $mainModelClass = '\\xjryanse\\order\\model\\OrderIncomeDistribute';
 
-    public static function save( array $data )
+    public static function save(  $data )
     {
         if(isset($data['order_id'])){
             $data['order_type'] = OrderService::getInstance( $data['order_id'] )->fOrderType();

@@ -86,6 +86,8 @@ class OrderService {
         $updData['goods_table']     = GoodsService::getInstance( $goodsId )->fGoodsTable();
         $updData['goods_table_id']  = GoodsService::getInstance( $goodsId )->fGoodsTableId();
         $con[] = ['id','=',$uuid];
+        //过滤数据
+        $updData = DbOperate::dataFilter( self::mainModel()->getTable(),$updData);
         self::mainModel()->where($con)->update($updData);
         //尝试流程节点的更新
         OrderFlowNodeService::checkLastNodeFinishAndNext( $uuid );
@@ -99,7 +101,7 @@ class OrderService {
         return self::extraAfterSave($data, $uuid);
     }    
     
-    public static function save(array $data) {
+    public static function save( $data) {
         self::checkTransaction();
         //数据校验
         DataCheck::must($data, ['goods_id']);
