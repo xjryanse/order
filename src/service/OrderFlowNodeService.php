@@ -22,6 +22,32 @@ class OrderFlowNodeService {
     protected static $mainModelClass = '\\xjryanse\\order\\model\\OrderFlowNode';
 
     /**
+     * 流程节点删除
+     * @return type
+     */
+    public function delete(){
+        //校验事务
+        self::checkTransaction();
+        //获取信息
+        $info           = $this->get();
+        $orderLastFlow  = self::orderLastFlow($info['order_id']);
+        if( $info['id'] != $orderLastFlow['id'] ){
+            throw new Exception('请先删除最后一个节点');
+        }
+        $con[] = ['order_id','=',$info['order_id']];
+        $count = self::count( $con );
+        if($count == 1){
+            throw new Exception('第一节点不可删');
+        }
+        //删除
+        $res = $this->commDelete();
+        //最后一个节点更新为待处理。
+        $orderLastFlow2 = self::orderLastFlow( $info['order_id'] );
+        self::mainModel()->where("id",$orderLastFlow2['id'])->update(['flow_status'=>"todo"]);
+        //结果返回
+        return $res;
+    }
+    /**
      * 额外输入信息
      */
     public static function extraPreSave(&$data, $uuid) {
@@ -100,7 +126,7 @@ class OrderFlowNodeService {
             $data['operate_user_id']        = $orderInfo['user_id'];
             $data['operate_customer_id']    = $orderInfo['customer_id'];
         } else {
-            $data['operate_user_id'] = session(SESSION_USER_ID);
+            $data['operate_user_id'] = OrderService::getInstance( $orderId )->fBusierId();
         }
         //保存
         $res = self::save( $data );
@@ -172,6 +198,8 @@ class OrderFlowNodeService {
         if(!$param){
             throw new Exception('订单信息不存在 '.$orderId);
         }
+        //特殊处理：20210304
+        $param['lastNodeId'] = $lastNode['id'];     //TODO,需优化
             Debug::debug('订单信息', $param);
 
         //判断节点是否完成
@@ -184,12 +212,19 @@ class OrderFlowNodeService {
         //添加下一节点
             Debug::debug('添加节点执行结果1', $lastNode['node_key'] );
             Debug::debug('添加节点执行结果2', $nextNodeKey );
-        $res = self::addNextNode($orderId, $lastNode['node_key'], $nextNodeKey );
-            Debug::debug('添加节点执行结果3', $res );
+        //节点向前
+        if(Arrays::value($lastNode, "direction") == 1){
+            $res = self::addNextNode($orderId, $lastNode['node_key'], $nextNodeKey );
+                Debug::debug('添加节点执行结果3', $res );
+        } else {
+            //节点向后：离开递归
+            $res = self::backPreNode($orderId, $lastNode['id'] );
+            return $res;
+        }
 //递归一下下一节点是否完成
         self::lastNodeFinishAndNext($orderId,$itemType);
         return $res;
-    }    
+    }
     
     /**
      * 祖宗节点直接添加
@@ -266,6 +301,24 @@ class OrderFlowNodeService {
 
         //根据流程模板id，添加流程
         return self::addFlowByTplId($orderId, $nextNode['id']);
+    }
+    /**
+     * 驳回上一个节点
+     * @param type $orderId
+     * @param type $thisNodeId
+     */
+    protected static function backPreNode( $orderId, $thisNodeId )
+    {
+        $thisNode           = self::getInstance( $thisNodeId )->get();
+        $orderPreFlow       = self::orderPreFlow($orderId, $thisNode['node_key']);
+        if($orderPreFlow){
+            $orderPreFlow = $orderPreFlow->toArray();
+        }
+        $orderPreFlow['id'] = self::mainModel()->newId();
+        $orderPreFlow['flow_status'] = "todo";
+        $orderPreFlow['create_time'] = date('Y-m-d H:i:s');
+        $orderPreFlow['update_time'] = date('Y-m-d H:i:s');
+        return self::save($orderPreFlow);
     }
 
     /*

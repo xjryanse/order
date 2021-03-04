@@ -29,6 +29,18 @@ class OrderService {
         if(Arrays::value($data, 'goods_id')){
             $data['order_prize'] = GoodsPrizeService::totalPrize( Arrays::value($data, 'goods_id') );
         }
+        $goodsId     = Arrays::value($data, 'goods_id');
+        $data['goods_name']      = GoodsService::getInstance( $goodsId )->fGoodsName();
+        $data['goods_table']     = GoodsService::getInstance( $goodsId )->fGoodsTable();
+        $data['goods_table_id']  = GoodsService::getInstance( $goodsId )->fGoodsTableId();
+        
+        if($data['goods_table']){
+            $service        = DbOperate::getService( $data['goods_table'] );
+            $info           = $service::getInstance( $data['goods_table_id'] )->get();
+            //取卖家公司信息
+            $data['seller_customer_id'] = Arrays::value($info, 'customer_id');
+            $data['busier_id'] = Arrays::value($data, 'busier_id') ? : Arrays::value($info, 'busier_id');
+        }
         return $data;
     }
     
@@ -53,11 +65,11 @@ class OrderService {
             //添加商品详情信息
             //20210201性能优化调整
 //            self::addSubServiceData($item, $goodsService, $goodsTableId);
-            if($goodsService){
-                $goodsInfo = $goodsService::getInstance($goodsTableId)->get();
-                //业务员
-                $item['busier_id'] = $goodsInfo && isset($goodsInfo['busier_id']) ? $goodsInfo['busier_id'] : '';
-            }
+//            if($goodsService){
+//                $goodsInfo = $goodsService::getInstance($goodsTableId)->get();
+//                //业务员
+//                $item['busier_id'] = $goodsInfo && isset($goodsInfo['busier_id']) ? $goodsInfo['busier_id'] : '';
+//            }
         }
 
         //订单末条流程
@@ -262,7 +274,10 @@ class OrderService {
     public function fCustomerId() {
         return $this->getFFieldValue(__FUNCTION__);
     }
-
+    //业务员id
+    public function fBusierId() {
+        return $this->getFFieldValue(__FUNCTION__);
+    }
     /**
      * 下单客户部门id
      */
