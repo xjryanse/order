@@ -60,26 +60,31 @@ class OrderFlowNodeService {
      * 额外输入信息
      */
     public static function extraAfterSave(&$data, $uuid) {
-        $info = self::getInstance( $uuid )->get();
-        $preNode = OrderFlowNodeTplService::getPreNode( Arrays::value($data, 'node_key'));            
+        $info               = self::getInstance( $uuid )->get();
+        $preNode            = OrderFlowNodeTplService::getPreNode( Arrays::value($data, 'node_key'));            
+        $orderUpdateData    = [];
+
         if( !$preNode || (Arrays::value($data, 'flow_status') && $data['flow_status'] == XJRYANSE_OP_FINISH)){
             self::lastNodeFinishAndNext($info['order_id']);
             //TODO:拆分公共
             if( $info['node_key'] == 'orderClose'){
                 $orderInfo = OrderService::getInstance($info['order_id'])->get();
                 GoodsService::setOnSaleByGoodsTableId($orderInfo['goods_table_id'], $orderInfo['goods_table']);
-                OrderService::getInstance($info['order_id'])->update(['order_status'=>ORDER_CLOSE]);    //交易关闭
+                $orderUpdateData['order_status']    = ORDER_CLOSE;
+//                OrderService::getInstance($info['order_id'])->update(['order_status'=>ORDER_CLOSE]);    //交易关闭
             }
-//        } else {
-//            try{
-//                self::lastNodeFinishAndNext($info['order_id'],'order','',1);
-//            } catch(\Exception $e){}
         }
         //订单完成：修改订单状态
         if( $info['node_key'] == 'orderFinish'){
-            OrderService::getInstance($info['order_id'])->update(['order_status'=>ORDER_FINISH]);   //交易完成
+            $orderUpdateData['order_status']    = ORDER_FINISH;
+//            OrderService::getInstance($info['order_id'])->update(['order_status'=>ORDER_FINISH]);   //交易完成
         }
-        
+        //更新最后节点状态
+        if( Arrays::value($data, 'node_key') ){
+            $orderUpdateData['lastFlowNodeRole']   = Arrays::value($data, 'operate_role');
+            $orderUpdateData['orderLastFlowNode']  = Arrays::value($data, 'node_key');
+        }
+        OrderService::getInstance($info['order_id'])->update( $orderUpdateData );    //交易关闭
         return $data;
     }
     
@@ -145,7 +150,16 @@ class OrderFlowNodeService {
         $nextNodeName   = $nextNode['next_node_name'];
         $operateRole    = $nextNode['operate_role'];
         Debug::debug('addFlowByTplId 的 $nextNode信息',$nextNode);
-        return self::addFlow( $orderId , $nextNodeKey , $nextNodeName, $operateRole );
+        //
+        $data = [];
+        if( isset($nextNode['plan_finish_minutes']) ){
+            $data['plan_finish_time']   = date('Y-m-d H:i:s',time() + $nextNode['plan_finish_minutes'] * 60);
+        }
+        if( isset($nextNode['next_node_desc']) ){
+            $data['node_describe']      = $nextNode['next_node_desc'];
+        }
+
+        return self::addFlow( $orderId , $nextNodeKey , $nextNodeName, $operateRole,$data );
     }
     
     /**

@@ -57,23 +57,23 @@ class OrderService {
         //20210201性能优化调整
 //        self::addSubData( $item, $item['order_type'] );
         //goodsId提取商品来源表的数据
-        if(isset($item['goods_id']) && $item['goods_id']){
-            $goodsTable     = GoodsService::getInstance($item['goods_id'])->fGoodsTable();
-            $goodsTableId   = GoodsService::getInstance($item['goods_id'])->fGoodsTableId();
-            $goodsService   = DbOperate::getService($goodsTable);
-//            dump( $goodsTable.'-'.$goodsTableId );
-            //添加商品详情信息
-            //20210201性能优化调整
-//            self::addSubServiceData($item, $goodsService, $goodsTableId);
-//            if($goodsService){
-//                $goodsInfo = $goodsService::getInstance($goodsTableId)->get();
-//                //业务员
-//                $item['busier_id'] = $goodsInfo && isset($goodsInfo['busier_id']) ? $goodsInfo['busier_id'] : '';
-//            }
-        }
+//        if(isset($item['goods_id']) && $item['goods_id']){
+//            $goodsTable     = GoodsService::getInstance($item['goods_id'])->fGoodsTable();
+//            $goodsTableId   = GoodsService::getInstance($item['goods_id'])->fGoodsTableId();
+//            $goodsService   = DbOperate::getService($goodsTable);
+////            dump( $goodsTable.'-'.$goodsTableId );
+//            //添加商品详情信息
+//            //20210201性能优化调整
+////            self::addSubServiceData($item, $goodsService, $goodsTableId);
+////            if($goodsService){
+////                $goodsInfo = $goodsService::getInstance($goodsTableId)->get();
+////                //业务员
+////                $item['busier_id'] = $goodsInfo && isset($goodsInfo['busier_id']) ? $goodsInfo['busier_id'] : '';
+////            }
+//        }
 
         //订单末条流程
-        $item['orderLastFlowNode'] = OrderFlowNodeService::orderLastFlow( $uuid );
+        $item['lastFlowNode'] = OrderFlowNodeService::orderLastFlow( $uuid );
         return $item;
     }
     
@@ -110,7 +110,15 @@ class OrderService {
      * 额外输入信息
      */
     public static function extraAfterUpdate(&$data, $uuid) {
-        return self::extraAfterSave($data, $uuid);
+        $res    = self::extraAfterSave($data, $uuid);
+        $info   = self::getInstance()->get(0);
+        //②写入订单子表
+        $subService = self::getSubService( $info['order_type'] );
+        if( $info['order_type'] && class_exists($subService) ){
+            $subService::getInstance( $uuid )->update( $data );
+        }
+        
+        return $res;
     }    
     
     public static function save( $data) {
