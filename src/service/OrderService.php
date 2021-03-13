@@ -33,6 +33,8 @@ class OrderService {
         $data['goods_name']      = GoodsService::getInstance( $goodsId )->fGoodsName();
         $data['goods_table']     = GoodsService::getInstance( $goodsId )->fGoodsTable();
         $data['goods_table_id']  = GoodsService::getInstance( $goodsId )->fGoodsTableId();
+        $data['seller_customer_id']  = GoodsService::getInstance( $goodsId )->fCustomerId();
+        $data['seller_user_id']  = GoodsService::getInstance( $goodsId )->fSellerUserId();
         
         if($data['goods_table']){
             $service        = DbOperate::getService( $data['goods_table'] );
@@ -239,6 +241,9 @@ class OrderService {
      * 商品名称
      */
     public function fGoodsName() {
+        return $this->getFFieldValue(__FUNCTION__);
+    }
+    public function fGoodsTableId() {
         return $this->getFFieldValue(__FUNCTION__);
     }
     /**

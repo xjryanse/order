@@ -17,7 +17,8 @@ class OrderFlowNodeService {
     use \xjryanse\traits\InstTrait;
     use \xjryanse\traits\MainModelTrait;
 
-    protected static $lastNodeFinishCount;  //末个节点执行次数
+    protected static $lastNodeFinishCount   = 0 ;   //末个节点执行次数
+    protected static $nextNodeKey           = '' ;  //下一个流程节点
     protected static $mainModel;
     protected static $mainModelClass = '\\xjryanse\\order\\model\\OrderFlowNode';
 
@@ -35,7 +36,7 @@ class OrderFlowNodeService {
             throw new Exception('请先删除最后一个节点');
         }
         $con[] = ['order_id','=',$info['order_id']];
-        $count = self::count( $con );
+        $count = self::mainModel()->where( $con )->count();
         if($count == 1){
             throw new Exception('第一节点不可删');
         }
@@ -43,7 +44,13 @@ class OrderFlowNodeService {
         $res = $this->commDelete();
         //最后一个节点更新为待处理。
         $orderLastFlow2 = self::orderLastFlow( $info['order_id'] );
-        self::mainModel()->where("id",$orderLastFlow2['id'])->update(['flow_status'=>"todo"]);
+        //已软删节点，此处直接删除
+        if($orderLastFlow2['is_delete'] == 1){
+            self::getInstance($orderLastFlow2['id'])->delete();
+        } else {
+            //更新状态
+            self::mainModel()->where("id",$orderLastFlow2['id'])->update(['flow_status'=>"todo"]);
+        }
         //结果返回
         return $res;
     }
@@ -84,7 +91,10 @@ class OrderFlowNodeService {
             $orderUpdateData['lastFlowNodeRole']   = Arrays::value($data, 'operate_role');
             $orderUpdateData['orderLastFlowNode']  = Arrays::value($data, 'node_key');
         }
-        OrderService::getInstance($info['order_id'])->update( $orderUpdateData );    //交易关闭
+        //TODO校验影响20210309
+        OrderService::mainModel()->where('id',$info['order_id'])->update( $orderUpdateData );    //交易关闭
+        //TODO校验影响20210311：更新定金的金额
+        OrderFlowNodePrizeTplService::setOrderPrePrize( $info['order_id'], Arrays::value($data, 'node_key') );
         return $data;
     }
     
@@ -158,6 +168,9 @@ class OrderFlowNodeService {
         if( isset($nextNode['next_node_desc']) ){
             $data['node_describe']      = $nextNode['next_node_desc'];
         }
+        if( isset($nextNode['is_jump']) ){
+            $data['is_jump']      = $nextNode['is_jump'];
+        }
 
         return self::addFlow( $orderId , $nextNodeKey , $nextNodeName, $operateRole,$data );
     }
@@ -174,6 +187,7 @@ class OrderFlowNodeService {
         if(!$nextNodeKey){
             //从请求参数中获取一下。nextNodeKey;
             $nextNodeKey = Request::param('nextNodeKey','');
+            self::$nextNodeKey = $nextNodeKey;
             Debug::debug( '下一个节点key，来自于请求',$nextNodeKey );
         }
         //校验事务
@@ -194,6 +208,13 @@ class OrderFlowNodeService {
      */
     public static function lastNodeFinishAndNext( $orderId,$itemType="order",  $nextNodeKey='',$limitTimes = 20)
     {
+        //TODO优化逻辑20210312
+        if(!$nextNodeKey && !self::$nextNodeKey){
+            //从请求参数中获取一下。nextNodeKey;
+            $nextNodeKey = Request::param('nextNodeKey','');
+            self::$nextNodeKey = $nextNodeKey;            
+        }
+        
         self::$lastNodeFinishCount = self::$lastNodeFinishCount +1;
         if(self::$lastNodeFinishCount > $limitTimes){
             throw new Exception('lastNodeFinishAndNext 次数超限');
@@ -202,7 +223,9 @@ class OrderFlowNodeService {
         $lastNode = self::orderLastFlow($orderId);    
         //更新订单的末个节点信息
         if(self::mainModel()->hasField('orderLastFlowNode')){
-            OrderService::mainModel()->where('id', $orderId )->update(['orderLastFlowNode'=>$lastNode['node_key']]);        
+            //更新订单的末个节点信息
+            self::updateOrderLastNode( $orderId );
+//            OrderService::mainModel()->where('id', $orderId )->update(['orderLastFlowNode'=>$lastNode['node_key']]);        
         }
             Debug::debug('订单：'.$orderId.'末条流程', $lastNode);
         if(!$lastNode || $lastNode['flow_status'] != XJRYANSE_OP_TODO){
@@ -223,6 +246,12 @@ class OrderFlowNodeService {
         }
         //如果已完成，设为完成
         self::getInstance($lastNode['id'])->setFinish();
+//        dump($lastNode);
+        //20210311:如果节点可跳过，且已经达成，且$lastNodeFinishCount >1(表示非首次执行的订单节点)，则删除原有节点（没有用的节点）
+        if($lastNode['is_jump'] && time() - strtotime($lastNode['create_time']) <= 2 ){
+            //在连续多订单判断过程中，删除可跳过的订单节点（软删除）
+            self::mainModel()->where( 'id',$lastNode['id'] )->update( ['is_delete'=>1] );
+        }
         //添加下一节点
             Debug::debug('添加节点执行结果1', $lastNode['node_key'] );
             Debug::debug('添加节点执行结果2', $nextNodeKey );
@@ -236,10 +265,27 @@ class OrderFlowNodeService {
             return $res;
         }
 //递归一下下一节点是否完成
+        Debug::debug('---循环节点key', $itemType );        
         self::lastNodeFinishAndNext($orderId,$itemType);
         return $res;
     }
-    
+    /**
+     * 更新订单末个节点流程
+     * @param type $orderId
+     */
+    public static function updateOrderLastNode( $orderId )
+    {
+        $con[] = ['order_id','=',$orderId];
+        $con[] = ['is_delete','=',0];
+        $lastInfo           = self::mainModel()->where( $con )->order('id desc')->find();
+        $lastFlowNodeRole   = $lastInfo && $lastInfo['flow_status'] == 'todo' ? $lastInfo['operate_role'] : "" ;
+        $data['lastFlowNodeRole']   = $lastFlowNodeRole;
+        $data['orderLastFlowNode']  = $lastInfo['node_key'];
+        
+        $res = OrderService::mainModel()->where('id', $orderId )->update( $data );  
+        
+        return $res;
+    }
     /**
      * 祖宗节点直接添加
      * @param type $orderId     订单id
@@ -288,7 +334,8 @@ class OrderFlowNodeService {
         if(! $nextNodeKey ){
             Debug::debug( '当前节点',$thisNodeKey );
             if( OrderFlowNodeTplService::nextNodeCount( $thisNodeKey ) >1 ){
-                throw new Exception('存在多个下级流程!且未指定走向');
+                //20210311测试
+//                throw new Exception('存在多个下级流程!且未指定走向');
             }
             $nextNode    = OrderFlowNodeTplService::nextNodeFind( $thisNodeKey );
             Debug::debug( 'addNextNode下一节点信息',$nextNode );
@@ -323,6 +370,7 @@ class OrderFlowNodeService {
      */
     protected static function backPreNode( $orderId, $thisNodeId )
     {
+        //若前一个流程节点是删除节点，则再次回滚
         $thisNode           = self::getInstance( $thisNodeId )->get();
         $orderPreFlow       = self::orderPreFlow($orderId, $thisNode['node_key']);
         if($orderPreFlow){
@@ -332,7 +380,8 @@ class OrderFlowNodeService {
         $orderPreFlow['flow_status'] = "todo";
         $orderPreFlow['create_time'] = date('Y-m-d H:i:s');
         $orderPreFlow['update_time'] = date('Y-m-d H:i:s');
-        return self::save($orderPreFlow);
+        $res = self::save($orderPreFlow);
+        return $res;
     }
 
     /*
@@ -355,9 +404,10 @@ class OrderFlowNodeService {
      * 设定流程完成
      */
     public function setFinish() {
-        $this->setField('flow_status', XJRYANSE_OP_FINISH);
-        $this->setField('finish_time', date('Y-m-d H:i:s'));
-        return true;
+        $data['flow_status'] = XJRYANSE_OP_FINISH;
+        $data['finish_time'] = date('Y-m-d H:i:s');
+        return $this->update( $data);
+//        return self::mainModel()->where("id",$this->uuid)->update($data);
     }
     /**
      * 获取订单的末个流程节点
@@ -372,6 +422,7 @@ class OrderFlowNodeService {
      */
     public static function orderPreFlow($orderId, $operate) {
         $con[] = ['order_id', '=', $orderId];
+        $con[] = ['is_delete', '=', 0];
         $lists = self::mainModel()->where($con)->order('id desc')->select();
         foreach ($lists as $k => $v) {
             if ($v['node_key'] == $operate) {

@@ -7,4 +7,8 @@ namespace xjryanse\order\model;
 class Order extends Base
 {
 
+    public function setOrderFinishTimeAttr($value)
+    {
+        return self::setTimeVal($value);
+    }
 }
