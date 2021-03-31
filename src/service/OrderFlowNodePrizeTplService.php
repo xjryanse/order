@@ -4,6 +4,7 @@ namespace xjryanse\order\service;
 use xjryanse\system\interfaces\MainModelInterface;
 use xjryanse\logic\Arrays;
 use xjryanse\goods\service\GoodsPrizeService;
+use xjryanse\logic\Debug;
 
 /**
  * 订单流程模板
@@ -39,10 +40,14 @@ class OrderFlowNodePrizeTplService implements MainModelInterface
         $goodsId    = Arrays::value($orderInfo, 'goods_id');  
         //根据订单id和当前节点key，获取价格key
         $prizeKeys = self::getPrizeKeys($saleType, $nodeKey);
+        Debug::debug('当前节点，$prizeKeys', $prizeKeys);
         if($prizeKeys){
             $con[]  = ['goods_id','=',$goodsId];
             $con[]  = ['prize_key','in',$prizeKeys];
             $prizeAll = GoodsPrizeService::sum( $con , 'prize');
+            //调试
+            Debug::debug('当前节点，$nodeKey', $nodeKey);
+            Debug::debug('更新订单预付金额，$prizeAll', $prizeAll);
             //更新订单的最小定金
             OrderService::mainModel( )->where('id',$orderId)->update(['pre_prize'=>$prizeAll]);
         }

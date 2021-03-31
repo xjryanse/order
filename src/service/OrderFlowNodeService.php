@@ -2,10 +2,13 @@
 
 namespace xjryanse\order\service;
 
+use xjryanse\goods\service\GoodsService;
+use xjryanse\goods\service\GoodsPrizeKeyService;
+use xjryanse\goods\service\GoodsPrizeRefTplService;
 use xjryanse\order\service\OrderFlowNodeTplService;
 use xjryanse\order\service\OrderService;
-use xjryanse\goods\service\GoodsService;
 use xjryanse\system\service\SystemConditionService;
+use xjryanse\finance\service\FinanceStatementOrderService;
 use xjryanse\logic\Debug;
 use xjryanse\logic\Arrays;
 use think\facade\Request;
@@ -17,7 +20,7 @@ class OrderFlowNodeService {
     use \xjryanse\traits\InstTrait;
     use \xjryanse\traits\MainModelTrait;
 
-    protected static $lastNodeFinishCount   = 0 ;   //末个节点执行次数
+    public static $lastNodeFinishCount   = 0 ;   //末个节点执行次数
     protected static $nextNodeKey           = '' ;  //下一个流程节点
     protected static $mainModel;
     protected static $mainModelClass = '\\xjryanse\\order\\model\\OrderFlowNode';
@@ -58,16 +61,24 @@ class OrderFlowNodeService {
      * 额外输入信息
      */
     public static function extraPreSave(&$data, $uuid) {
+        self::checkTransaction();
         $orderId = Arrays::value($data, 'order_id');
         $data['order_type'] = OrderService::getInstance( $orderId )->fOrderType();
-
+        Debug::debug('正在保存订单节点信息',$data);        
         return $data;
     }
+    
+    public static function extraPreUpdate(&$data, $uuid) {
+        self::checkTransaction();
+        return $data;
+    }    
     /**
-     * 额外输入信息
+     * 更新，新增共用
      */
-    public static function extraAfterSave(&$data, $uuid) {
+    protected static function afterOperate(&$data, $uuid)
+    {
         $info               = self::getInstance( $uuid )->get();
+        //步骤2：
         $preNode            = OrderFlowNodeTplService::getPreNode( Arrays::value($data, 'node_key'));            
         $orderUpdateData    = [];
 
@@ -75,8 +86,9 @@ class OrderFlowNodeService {
             self::lastNodeFinishAndNext($info['order_id']);
             //TODO:拆分公共
             if( $info['node_key'] == 'orderClose'){
-                $orderInfo = OrderService::getInstance($info['order_id'])->get();
-                GoodsService::setOnSaleByGoodsTableId($orderInfo['goods_table_id'], $orderInfo['goods_table']);
+                //20210326注释
+//                $orderInfo = OrderService::getInstance($info['order_id'])->get();
+//                GoodsService::setOnSaleByGoodsTableId($orderInfo['goods_table_id'], $orderInfo['goods_table']);
                 $orderUpdateData['order_status']    = ORDER_CLOSE;
 //                OrderService::getInstance($info['order_id'])->update(['order_status'=>ORDER_CLOSE]);    //交易关闭
             }
@@ -93,8 +105,28 @@ class OrderFlowNodeService {
         }
         //TODO校验影响20210309
         OrderService::mainModel()->where('id',$info['order_id'])->update( $orderUpdateData );    //交易关闭
-        //TODO校验影响20210311：更新定金的金额
+        
+        //20210326：后更新，增加订单结束判断
+        if( $info['node_key'] == 'orderClose'){
+            $orderInfo = OrderService::getInstance($info['order_id'])->get();
+            GoodsService::setOnSaleByGoodsTableId($orderInfo['goods_table_id'], $orderInfo['goods_table']);
+        }
+
+        return $data;
+    }
+    /**
+     * 额外输入信息
+     */
+    public static function extraAfterSave(&$data, $uuid) {
+        $info               = self::getInstance( $uuid )->get();
+        //步骤1：TODO校验影响20210311：更新定金的金额（要放在下一个流程节点判断的前面）
+        Debug::debug('尝试更新订单的预付金额data',$data);
+        Debug::debug('尝试更新订单的预付金额',Arrays::value($data, 'node_key'));
         OrderFlowNodePrizeTplService::setOrderPrePrize( $info['order_id'], Arrays::value($data, 'node_key') );
+        //没有待收待付记录，则添加一下：20210319（有涉及条件判断，必须放在self::afterOperate之前）
+        OrderFlowNodeService::addFinanceStatementOrder( $uuid );
+        //修改订单状态，更新节点等操作
+        $data = self::afterOperate($data, $uuid);
         return $data;
     }
     
@@ -102,8 +134,82 @@ class OrderFlowNodeService {
      * 额外输入信息
      */
     public static function extraAfterUpdate(&$data, $uuid) {
-        return self::extraAfterSave($data, $uuid);
-    }    
+        $res    = self::afterOperate($data, $uuid);
+        $info   = self::getInstance( $uuid )->get(0);
+        //步骤：删除关联的未结账单
+        if( Arrays::value($info, 'flow_status') == XJRYANSE_OP_CLOSE && Arrays::value($info, 'prize_key')){
+            //被关闭后，删除未结算的账单明细
+            $con[] = ['order_id','=',Arrays::value($info, 'order_id')];
+            $con[] = ['statement_type','=',Arrays::value($info, 'prize_key')];
+            $con[] = ['has_settle','=',0];
+            $lists = FinanceStatementOrderService::mainModel()->where( $con )->select();
+            foreach( $lists as $key=>$value){
+                //一个个删
+                if(!Arrays::value($value, 'statement_id')){
+                    FinanceStatementOrderService::mainModel()->where( 'id',$value['id'] )->delete();
+                }
+            }
+        }
+        return $res;
+    }
+
+    /**
+     * 添加关联收付款明细
+     */
+    public static function addFinanceStatementOrder( $orderFlowNodeId )
+    {
+        $info           = self::getInstance( $orderFlowNodeId )->get(0);
+        Debug::debug('addFinanceStatementOrder的$info',$info);
+        $orderId        = Arrays::value($info, 'order_id');
+        $prizeKeys      = Arrays::value($info, 'prize_key');
+        Debug::debug('addFinanceStatementOrder的$orderId',$orderId);
+        Debug::debug('addFinanceStatementOrder的$prizeKey',$prizeKeys);
+
+        $prizeKeyArr = explode(',',$prizeKeys); //兼容多个价格的情况
+        foreach( $prizeKeyArr as $prizeKey){
+            //价格账单是否已存在
+            $con[] = ['order_id','=',$orderId];
+            $con[] = ['statement_type','=',$prizeKey];
+            $hasStatementOrder  = FinanceStatementOrderService::count($con);
+            Debug::debug('addFinanceStatementOrder的$hasStatementOrder',$hasStatementOrder);
+            Debug::debug('addFinanceStatementOrder的$prizeKey',$prizeKey);
+            $goodsPrizeInfo         = GoodsPrizeKeyService::getByPrizeKey( $prizeKey );  //价格key取归属
+            //有key，无记录，则自动添加一条；有key，且key不可重复，则不添加
+            if(!$prizeKey || ($hasStatementOrder && !Arrays::value($goodsPrizeInfo,'is_duplicate'))){
+                return false;
+            }
+
+            if( Arrays::value($goodsPrizeInfo,'type') == 'ref' ){
+                //【退款】 ref
+                //todo,优化合并，在退款规则中再找一找：20210319
+                $orderInfo      = OrderService::getInstance( $orderId )->get(0);
+                $needPayPrize   = GoodsPrizeRefTplService::orderGetRef($orderId, $prizeKey, Arrays::value($orderInfo , 'cancel_by'));
+                Debug::debug('addFinanceStatementOrder，从退款获得的$needPayPrize',$needPayPrize);
+            } else {
+                //【付款】 pay
+                $needPayPrize           = OrderService::getInstance( $orderId )->prizeKeyGetPrize( $prizeKey );
+                Debug::debug('addFinanceStatementOrder，从订单获得的$needPayPrize',$needPayPrize);
+                if(!$needPayPrize){
+                    //从请求中来：兼容自己输入价格的情况。
+                    $needPayPrize = Request::param( $prizeKey ,0);
+                    Debug::debug('addFinanceStatementOrder，从请求获得的$needPayPrize',$needPayPrize);
+                }
+            }
+            //有价格才添加
+            if(!$needPayPrize){
+                return false;
+            }
+            $data['order_id']       = $orderId;
+            $data['change_type']    = Arrays::value($goodsPrizeInfo,'change_type') ;
+            $data['statement_cate'] = GoodsPrizeKeyService::keyBelongRole( $prizeKey );  //价格key取归属
+            $data['need_pay_prize'] = $needPayPrize;
+            $data['statement_type'] = $prizeKey;
+            $res = FinanceStatementOrderService::save( $data );
+        }
+        return $res;
+    }
+    
+    
     
     /**
      * 给订单添加流程【参数有优化】
@@ -171,6 +277,9 @@ class OrderFlowNodeService {
         if( isset($nextNode['is_jump']) ){
             $data['is_jump']      = $nextNode['is_jump'];
         }
+        if( isset($nextNode['prize_key']) ){
+            $data['prize_key']    = $nextNode['prize_key'];
+        }        
 
         return self::addFlow( $orderId , $nextNodeKey , $nextNodeName, $operateRole,$data );
     }
@@ -184,6 +293,8 @@ class OrderFlowNodeService {
      */
     public static function checkLastNodeFinishAndNext( $orderId,$itemType="order",  $nextNodeKey='')
     {
+        //归置末节点次数：20210326
+        self::$lastNodeFinishCount = 0;
         if(!$nextNodeKey){
             //从请求参数中获取一下。nextNodeKey;
             $nextNodeKey = Request::param('nextNodeKey','');
@@ -319,7 +430,9 @@ class OrderFlowNodeService {
             self::getInstance( $lastNode['id'])->update(['flow_status'=> XJRYANSE_OP_CLOSE ]);
         }
         //根据流程模板id，直接添加流程
-        return self::addFlowByTplId($orderId, $preNode['id']);
+        $res = self::addFlowByTplId($orderId, $preNode['id']);
+        Debug::debug( '添加流程：grandNodeDirectAdd',$res );
+        return $res;
     }
     /**
      * 添加下一节点
@@ -361,7 +474,9 @@ class OrderFlowNodeService {
         }
 
         //根据流程模板id，添加流程
-        return self::addFlowByTplId($orderId, $nextNode['id']);
+        $res = self::addFlowByTplId($orderId, $nextNode['id']);
+        Debug::debug( '添加流程：addNextNode',$res );        
+        return $res;
     }
     /**
      * 驳回上一个节点
