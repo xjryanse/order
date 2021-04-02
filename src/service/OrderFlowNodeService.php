@@ -317,7 +317,7 @@ class OrderFlowNodeService {
      * @param type $nextNodeKey      下一节点key，适用于多个后续节点选一
      * @return boolean
      */
-    public static function lastNodeFinishAndNext( $orderId,$itemType="order",  $nextNodeKey='',$limitTimes = 20)
+    public static function lastNodeFinishAndNext( $orderId,$itemType="order",  $nextNodeKey='',$limitTimes = 30)
     {
         //TODO优化逻辑20210312
         if(!$nextNodeKey && !self::$nextNodeKey){

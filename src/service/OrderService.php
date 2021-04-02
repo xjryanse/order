@@ -90,6 +90,9 @@ class OrderService {
         if( self::hasNoFinish($data['goods_table'], $data['goods_table_id'])){
             throw new Exception( $data['goods_name'] .'尚有未结订单，无法下单');
         }
+        //【20210402】取消订单，删除全部未生成账单未结算的明细
+        
+        
 
         return $data;
     }
