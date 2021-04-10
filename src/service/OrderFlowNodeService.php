@@ -183,8 +183,9 @@ class OrderFlowNodeService {
                 //【退款】 ref
                 //todo,优化合并，在退款规则中再找一找：20210319
                 $orderInfo      = OrderService::getInstance( $orderId )->get(0);
+                Debug::debug('addFinanceStatementOrder，从退款获得的$prizeKey',$prizeKey);
                 $needPayPrize   = GoodsPrizeRefTplService::orderGetRef($orderId, $prizeKey, Arrays::value($orderInfo , 'cancel_by'));
-                Debug::debug('addFinanceStatementOrder，从退款获得的$needPayPrize',$needPayPrize);
+                Debug::debug('addFinanceStatementOrder，从退款获得的'.$prizeKey.'的$needPayPrize',$needPayPrize);
             } else {
                 //【付款】 pay
                 $needPayPrize           = OrderService::getInstance( $orderId )->prizeKeyGetPrize( $prizeKey );
@@ -204,6 +205,7 @@ class OrderFlowNodeService {
             $data['statement_cate'] = GoodsPrizeKeyService::keyBelongRole( $prizeKey );  //价格key取归属
             $data['need_pay_prize'] = $needPayPrize;
             $data['statement_type'] = $prizeKey;
+            Debug::debug('【最终添加】addFinanceStatementOrder，的data',$data);
             $res = FinanceStatementOrderService::save( $data );
         }
         return $res;

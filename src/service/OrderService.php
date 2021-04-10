@@ -7,6 +7,8 @@ use xjryanse\order\service\OrderFlowNodeService;
 use xjryanse\goods\service\GoodsService;
 use xjryanse\goods\service\GoodsPrizeService;
 use xjryanse\goods\service\GoodsPrizeTplService;
+use xjryanse\goods\service\GoodsPrizeKeyService;
+use xjryanse\finance\service\FinanceStatementOrderService;
 use xjryanse\logic\DataCheck;
 use xjryanse\logic\DbOperate;
 use xjryanse\logic\Arrays;
@@ -252,7 +254,12 @@ class OrderService {
             $buyerPrize     = GoodsPrizeService::buyerPrize( $goodsId, $prizeKey );
             Debug::debug( '$buyerPrize', $buyerPrize );
             if($isGrandPrize){
-                $payPrize   = OrderService::getInstance( $this->uuid )->fPayPrize();                
+//                $payPrize   = OrderService::getInstance( $this->uuid )->fPayPrize();                
+//                Debug::debug( '$payPrize', $payPrize );
+                //20210407修bug  已付金额=$prizeKey取全部子key，再查全部子key的已结。
+                $childKeys  = GoodsPrizeKeyService::getChildKeys( $prizeKey , true);    //返回一个key一维数组
+                $payPrize   = FinanceStatementOrderService::hasSettleMoney( $this->uuid, $childKeys);
+                Debug::debug( '$payPrize', $payPrize );
                 $buyerPrize = floatval($buyerPrize) - floatval($payPrize);
             }
             $finalPrize = $buyerPrize;
