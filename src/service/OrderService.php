@@ -13,6 +13,7 @@ use xjryanse\logic\DataCheck;
 use xjryanse\logic\DbOperate;
 use xjryanse\logic\Arrays;
 use xjryanse\logic\Debug;
+use think\Db;
 use Exception;
 /**
  * 订单总表
@@ -101,8 +102,18 @@ class OrderService {
     
     public static function extraPreUpdate( &$item ,$uuid )
     {
+        self::checkTransaction();
         if( in_array(Arrays::value($item, 'order_status'),['finish','close'])){
             $data['order_finish_time'] = date('Y-m-d H:i:s');
+        }
+        if( Arrays::value($item, 'goods_name') ){
+            $info       = self::getInstance()->get(0);
+            $preName    = Arrays::value($info, 'goods_name').' ';
+            $aftName    = Arrays::value($item, 'goods_name').' ';
+            
+            $tableName = FinanceStatementOrderService::mainModel()->getTable();
+            $sql = "update ". $tableName ." set statement_name= replace(`statement_name`,'". $preName ."','". $aftName ."') where `order_id` = '". $uuid ."'";
+            Db::query( $sql );
         }
         return $data;
     }
