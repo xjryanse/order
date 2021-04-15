@@ -29,16 +29,16 @@ class OrderService {
 
     public static function paginate( $con = [],$order='',$perPage=10,$having = '')
     {
-        $hasOrderStatus = false;
-        foreach( $con as $key=>$value){
-            if($value[0] == 'order_status'){
-                $hasOrderStatus = true;
-            }
-        }
-        //没指定状态时，过滤掉已关闭的订单
-        if( !$hasOrderStatus ){
-            $con[] = ['order_status','<>','close']; //订单关闭过滤
-        }
+//        $hasOrderStatus = false;
+//        foreach( $con as $key=>$value){
+//            if($value[0] == 'order_status'){
+//                $hasOrderStatus = true;
+//            }
+//        }
+//        //没指定状态时，过滤掉已关闭的订单
+//        if( !$hasOrderStatus ){
+//            $con[] = ['order_status','<>','close']; //订单关闭过滤
+//        }
         $res = self::commPaginate($con, $order, $perPage, $having);
         return $res;
     }
@@ -169,7 +169,7 @@ class OrderService {
      */
     public static function extraAfterUpdate(&$data, $uuid) {
         $res    = self::extraAfterSave($data, $uuid);
-        $info   = self::getInstance()->get(0);
+        $info   = self::getInstance( $uuid )->get(0);
         //②写入订单子表
         $subService = self::getSubService( $info['order_type'] );
         if( $info['order_type'] && class_exists($subService) ){

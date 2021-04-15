@@ -11,4 +11,8 @@ class Order extends Base
     {
         return self::setTimeVal($value);
     }
+    public function setOrderBusierTimeAttr($value)
+    {
+        return self::setTimeVal($value);
+    }    
 }
