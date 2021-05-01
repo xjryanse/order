@@ -40,6 +40,27 @@ class OrderService {
 //            $con[] = ['order_status','<>','close']; //订单关闭过滤
 //        }
         $res = self::commPaginate($con, $order, $perPage, $having);
+        $conField = array_column($res['con'],0);
+        //【当前页合计】
+        $sumCurrentOrder = 0;
+        $sumCurrentFinal = 0;
+        foreach( $res['data'] as $key=>$value){
+            $sumCurrentOrder += $value['order_prize'];
+            $sumCurrentFinal += $value['final_prize'];
+        }
+
+        $sumTotalOrder = self::sum( $res['con'], 'order_prize');
+        $sumTotalFinal = self::sum( $res['con'], 'final_prize');
+        //统计数据描述
+        $res['staticsDescribe'] = "本页订单总价：￥".$sumCurrentOrder;
+        //有利润查询
+        if(in_array('final_prize',$conField)){
+            $res['staticsDescribe'] .= "（有剩余￥".$sumCurrentFinal."）";
+        }
+        $res['staticsDescribe'] .= "，全部页订单总价：￥".$sumTotalOrder;
+        if(in_array('final_prize',$conField)){
+            $res['staticsDescribe'] .= "（有剩余￥".$sumTotalFinal."）";        
+        }
         return $res;
     }
     
@@ -199,7 +220,6 @@ class OrderService {
             $goodsName = GoodsService::getInstance( $data['goods_id'])->fGoodsName();
             throw new Exception('商品'.$goodsName.'已经销售或未上架');
         }
-        
         $data['seller_user_id'] = GoodsService::getInstance( $data['goods_id'])->fSellerUserId();
         $data['order_type']     = GoodsService::getInstance( $data['goods_id'])->fSaleType();
         $data['shop_id']        = GoodsService::getInstance( $data['goods_id'])->fShopId();
@@ -207,13 +227,12 @@ class OrderService {
         $data['order_status'] = isset($data['order_status']) ? $data['order_status'] : ORDER_NEEDPAY;
         //①订单保存
         $res = self::commSave( $data );
-        
         //②写入订单子表
         $subService = self::getSubService( $data['order_type'] );
         if( class_exists($subService) ){
             $subService::save( $res ? $res->toArray() : [] );
         }
-        
+
         //③写入流程表
         $nodeKey = camelize($data['order_type']).'BuyerOrder' ;//订单类型+买家下单
         OrderFlowNodeService::addFlow($res['id'], $nodeKey, '买家下单', 'buyer', $data);
@@ -474,6 +493,14 @@ class OrderService {
     public function fOutcomePrize() {
         return $this->getFFieldValue(__FUNCTION__);
     }    
+    //是否取消
+    public function fIsCancel() {
+        return $this->getFFieldValue(__FUNCTION__);
+    }        
+    //由谁取消
+    public function fCancelBy() {
+        return $this->getFFieldValue(__FUNCTION__);
+    }        
     /**
      * 已分派金额
      */

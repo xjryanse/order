@@ -26,6 +26,22 @@ class OrderFlowNodeService {
     protected static $mainModelClass = '\\xjryanse\\order\\model\\OrderFlowNode';
 
     /**
+     * 额外详情信息
+     */
+    protected static function extraDetail( &$item ,$uuid )
+    {
+        //添加分表数据:按类型提取分表服务类
+        if(!$item){
+            return false;
+        }
+        //订单状态是否取消
+        $item['orderIsCancel'] = OrderService::getInstance($item['order_id'])->fIsCancel();
+        //订单状态由谁取消
+        $item['orderCancelBy'] = OrderService::getInstance($item['order_id'])->fCancelBy();
+        return $item;
+    }    
+    
+    /**
      * 流程节点删除
      * @return type
      */
@@ -71,7 +87,7 @@ class OrderFlowNodeService {
     public static function extraPreUpdate(&$data, $uuid) {
         self::checkTransaction();
         return $data;
-    }    
+    }
     /**
      * 更新，新增共用
      */
@@ -205,6 +221,8 @@ class OrderFlowNodeService {
             $data['statement_cate'] = GoodsPrizeKeyService::keyBelongRole( $prizeKey );  //价格key取归属
             $data['need_pay_prize'] = $needPayPrize;
             $data['statement_type'] = $prizeKey;
+            //增加是否退款的判断
+            $data['is_ref'] = Arrays::value($goodsPrizeInfo,'type') == 'ref' ? 1 :  0;
             Debug::debug('【最终添加】addFinanceStatementOrder，的data',$data);
             $res = FinanceStatementOrderService::save( $data );
         }
@@ -237,7 +255,8 @@ class OrderFlowNodeService {
         $data['flow_status']    = XJRYANSE_OP_TODO;
         
         //订单信息
-        $orderInfo  = OrderService::getInstance( $orderId )->get();       
+        $orderInfo  = OrderService::getInstance( $orderId )->get();    
+        $data['company_id'] = Arrays::value($orderInfo, 'company_id');
         //TODO，增加映射条件进行取数据
 
         //卖家
