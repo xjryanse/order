@@ -27,7 +27,7 @@ class OrderService {
     protected static $mainModel;
     protected static $mainModelClass = '\\xjryanse\\order\\model\\Order';
 
-    public static function paginate( $con = [],$order='',$perPage=10,$having = '')
+    public static function paginate( $con = [],$order='',$perPage=10,$having = '',$field="*")
     {
 //        $hasOrderStatus = false;
 //        foreach( $con as $key=>$value){
@@ -39,7 +39,7 @@ class OrderService {
 //        if( !$hasOrderStatus ){
 //            $con[] = ['order_status','<>','close']; //订单关闭过滤
 //        }
-        $res = self::commPaginate($con, $order, $perPage, $having);
+        $res = self::commPaginate($con, $order, $perPage, $having, $field);
         $conField = array_column($res['con'],0);
         //【当前页合计】
         $sumCurrentOrder = 0;
@@ -109,15 +109,12 @@ class OrderService {
             //取卖家公司信息
             $data['seller_customer_id'] = Arrays::value($info, 'customer_id');
             $data['busier_id'] = Arrays::value($data, 'busier_id') ? : Arrays::value($info, 'busier_id');
-        }
-        //临时：20210326
-        if( self::hasNoFinish($data['goods_table'], $data['goods_table_id'])){
-            throw new Exception( $data['goods_name'] .'尚有未结订单，无法下单');
+            //临时：20210326
+            if( self::hasNoFinish($data['goods_table'], $data['goods_table_id'])){
+                throw new Exception( $data['goods_name'] .'尚有未结订单，无法下单');
+            }
         }
         //【20210402】取消订单，删除全部未生成账单未结算的明细
-        
-        
-
         return $data;
     }
     
@@ -214,9 +211,9 @@ class OrderService {
     public static function save( $data) {
         self::checkTransaction();
         //数据校验
-        DataCheck::must($data, ['goods_id']);
-        GoodsService::getInstance( $data['goods_id'])->get(0);
-        if(GoodsService::getInstance( $data['goods_id'])->fGoodsStatus() != 'onsale'){
+//        DataCheck::must($data, ['goods_id']);
+//        GoodsService::getInstance( $data['goods_id'])->get(0);
+        if($data['goods_id'] && GoodsService::getInstance( $data['goods_id'])->fGoodsStatus() != 'onsale'){
             $goodsName = GoodsService::getInstance( $data['goods_id'])->fGoodsName();
             throw new Exception('商品'.$goodsName.'已经销售或未上架');
         }
@@ -227,10 +224,12 @@ class OrderService {
         $data['order_status'] = isset($data['order_status']) ? $data['order_status'] : ORDER_NEEDPAY;
         //①订单保存
         $res = self::commSave( $data );
-        //②写入订单子表
-        $subService = self::getSubService( $data['order_type'] );
-        if( class_exists($subService) ){
-            $subService::save( $res ? $res->toArray() : [] );
+        if(Arrays::value($data, 'order_type')){
+            //②写入订单子表
+            $subService = self::getSubService( $data['order_type'] );
+            if( class_exists($subService) ){
+                $subService::save( $res ? $res->toArray() : [] );
+            }
         }
 
         //③写入流程表
