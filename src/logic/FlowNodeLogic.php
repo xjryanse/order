@@ -69,17 +69,18 @@ class FlowNodeLogic
     public static function checkNodeFinish( $orderId, $flowNodeId, $nodeKey, $param = [] )
     {
         $info = OrderService::getInstance( $orderId )->get(0);
-        self::debug(__METHOD__.'-订单信息$info',$info);
+        self::debug(__METHOD__.'-入口参数测试$param',$param);
+        self::debug(__METHOD__.'-订单信息11$info',$info);
 
         $param[ 'goodsId' ]     = $info['goods_id'];     //订单id
         $param[ 'orderId' ]     = $orderId;     //订单id
         $param[ 'flowNodeId' ]  = $flowNodeId;  //节点id
 
+        self::debug(__METHOD__.'-$isReached$nodeKey',$nodeKey);
+        self::debug(__METHOD__.'-$isReached$param',$param);
         //判断节点是否完成
         $isReached = SystemConditionService::isReachByItemKey( 'order', $nodeKey, $param );
         self::debug(__METHOD__.'-$isReached',$isReached);
-        self::debug(__METHOD__.'-$isReached$nodeKey',$nodeKey);
-        self::debug(__METHOD__.'-$isReached$param',$param);
         
         //节点完成进入下一个节点
         if( $isReached ){
@@ -95,7 +96,8 @@ class FlowNodeLogic
     {
         $lastNode = OrderFlowNodeService::orderLastFlow( $orderId );
         self::debug(__METHOD__.'-$lastNode',$lastNode);
-        return self::checkNodeFinish($orderId, $lastNode['id'], $lastNode['node_key']);
+        $param = OrderService::mainModel()->where('id',$orderId)->field('pre_prize,order_prize,pay_prize,refund_prize')->find();
+        return self::checkNodeFinish($orderId, $lastNode['id'], $lastNode['node_key'],$param ? $param->toArray() : []);
     }
     
     /*
