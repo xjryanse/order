@@ -40,7 +40,7 @@ class OrderFlowNodePrizeTplService implements MainModelInterface
         $goodsId    = Arrays::value($orderInfo, 'goods_id');  
         //根据订单id和当前节点key，获取价格key
         $prizeKeys = self::getPrizeKeys($saleType, $nodeKey);
-        Debug::debug('当前节点，$prizeKeys', $prizeKeys);
+        Debug::debug('当前节点，$saleType:'.$saleType.'$nodeKey'.$nodeKey.'$prizeKeys', $prizeKeys);
         if($prizeKeys){
             $con[]  = ['goods_id','=',$goodsId];
             $con[]  = ['prize_key','in',$prizeKeys];

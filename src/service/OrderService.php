@@ -299,7 +299,9 @@ class OrderService {
             $isGrandPrize   = GoodsPrizeTplService::isPrizeKeyFinal( $prizeKey );
             $sellerPrize     = GoodsPrizeService::sellerPrize( $goodsId , $prizeKey );
             if($isGrandPrize){
-                $payPrize    = OrderService::getInstance( $this->uuid)->fOutcomePrize();
+                //无缓存取价格
+                $orderInfo   = OrderService::getInstance( $this->uuid)->get(0);
+                $payPrize    = Arrays::value($orderInfo, 'outcome_prize');
                 $sellerPrize = $sellerPrize - abs($payPrize);
             }
             $finalPrize = -1 * $sellerPrize;
@@ -521,6 +523,9 @@ class OrderService {
         return $this->getFFieldValue(__FUNCTION__);
     }
 
+    public function fSource(){
+        return $this->getFFieldValue(__FUNCTION__);
+    }
     /**
      * 排序
      */

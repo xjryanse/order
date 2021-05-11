@@ -39,7 +39,7 @@ class OrderFlowNodeService {
         //订单状态由谁取消
         $item['orderCancelBy'] = OrderService::getInstance($item['order_id'])->fCancelBy();
         return $item;
-    }    
+    }
     
     /**
      * 流程节点删除
