@@ -8,6 +8,7 @@ use xjryanse\goods\service\GoodsPrizeRefTplService;
 use xjryanse\order\service\OrderFlowNodeTplService;
 use xjryanse\order\service\OrderService;
 use xjryanse\system\service\SystemConditionService;
+use xjryanse\finance\service\FinanceStatementService;
 use xjryanse\finance\service\FinanceStatementOrderService;
 use xjryanse\logic\Debug;
 use xjryanse\logic\Arrays;
@@ -38,9 +39,20 @@ class OrderFlowNodeService {
         $item['orderIsCancel'] = OrderService::getInstance($item['order_id'])->fIsCancel();
         //订单状态由谁取消
         $item['orderCancelBy'] = OrderService::getInstance($item['order_id'])->fCancelBy();
+        //订单类型
+        $item['orderType'] = OrderService::getInstance($item['order_id'])->fOrderType();
         return $item;
     }
-    
+    /*
+     * 订单是否有已完成节点
+     */
+    public static function orderHasFinishNode( $orderId, $nodeKeys = [])
+    {
+        $con[] = ['order_id','=', $orderId];
+        $con[] = ['node_key','in', $nodeKeys];
+        $con[] = ['flow_status','=', 'finish'];
+        return self::count($con);
+    }
     /**
      * 流程节点删除
      * @return type
@@ -102,17 +114,12 @@ class OrderFlowNodeService {
             self::lastNodeFinishAndNext($info['order_id']);
             //TODO:拆分公共
             if( $info['node_key'] == 'orderClose'){
-                //20210326注释
-//                $orderInfo = OrderService::getInstance($info['order_id'])->get();
-//                GoodsService::setOnSaleByGoodsTableId($orderInfo['goods_table_id'], $orderInfo['goods_table']);
                 $orderUpdateData['order_status']    = ORDER_CLOSE;
-//                OrderService::getInstance($info['order_id'])->update(['order_status'=>ORDER_CLOSE]);    //交易关闭
             }
         }
         //订单完成：修改订单状态
         if( $info['node_key'] == 'orderFinish'){
             $orderUpdateData['order_status']    = ORDER_FINISH;
-//            OrderService::getInstance($info['order_id'])->update(['order_status'=>ORDER_FINISH]);   //交易完成
         }
         //更新最后节点状态
         if( Arrays::value($data, 'node_key') ){
@@ -177,12 +184,23 @@ class OrderFlowNodeService {
         $info           = self::getInstance( $orderFlowNodeId )->get(0);
         Debug::debug('addFinanceStatementOrder的$info',$info);
         $orderId        = Arrays::value($info, 'order_id');
+        $orderInfo      = OrderService::getInstance( $orderId )->get(0);
         $prizeKeys      = Arrays::value($info, 'prize_key');
         Debug::debug('addFinanceStatementOrder的$orderId',$orderId);
         Debug::debug('addFinanceStatementOrder的$prizeKey',$prizeKeys);
 
         $prizeKeyArr = explode(',',$prizeKeys); //兼容多个价格的情况
         foreach( $prizeKeyArr as $prizeKey){
+            if(!$prizeKey){
+                continue;
+            }
+            $prizeKeyRole = GoodsPrizeKeyService::keyBelongRole( $prizeKey );
+            if($prizeKeyRole == 'rec_user' && !Arrays::value( $orderInfo , 'rec_user_id')){
+                continue;
+            }
+            if($prizeKeyRole == 'busier' && !Arrays::value( $orderInfo , 'busier_id')){
+                continue;
+            }
             //价格账单是否已存在
             $con[] = ['order_id','=',$orderId];
             $con[] = ['statement_type','=',$prizeKey];
@@ -198,7 +216,6 @@ class OrderFlowNodeService {
             if( Arrays::value($goodsPrizeInfo,'type') == 'ref' ){
                 //【退款】 ref
                 //todo,优化合并，在退款规则中再找一找：20210319
-                $orderInfo      = OrderService::getInstance( $orderId )->get(0);
                 Debug::debug('addFinanceStatementOrder，从退款获得的$prizeKey',$prizeKey);
                 $needPayPrize   = GoodsPrizeRefTplService::orderGetRef($orderId, $prizeKey, Arrays::value($orderInfo , 'cancel_by'));
                 Debug::debug('addFinanceStatementOrder，从退款获得的'.$prizeKey.'的$needPayPrize',$needPayPrize);
@@ -218,13 +235,19 @@ class OrderFlowNodeService {
             }
             $data['order_id']       = $orderId;
             $data['change_type']    = Arrays::value($goodsPrizeInfo,'change_type') ;
-            $data['statement_cate'] = GoodsPrizeKeyService::keyBelongRole( $prizeKey );  //价格key取归属
-            $data['need_pay_prize'] = $needPayPrize;
+            $data['statement_cate'] = $prizeKeyRole;  //价格key取归属
+            $data['need_pay_prize'] = $data['change_type'] == 1 ?  abs($needPayPrize) : -1 * abs($needPayPrize);
             $data['statement_type'] = $prizeKey;
             //增加是否退款的判断
             $data['is_ref'] = Arrays::value($goodsPrizeInfo,'type') == 'ref' ? 1 :  0;
             Debug::debug('【最终添加】addFinanceStatementOrder，的data',$data);
             $res = FinanceStatementOrderService::save( $data );
+            //如果是充值到余额的，直接处理
+            //如果是分账的，也直接处理
+            if( in_array(Arrays::value($goodsPrizeInfo,'to_money'),['money','sec_share']) ){
+                $financeStatement = FinanceStatementService::statementGenerate( $res['id'] );
+                FinanceStatementService::getInstance($financeStatement['id'])->doDirect();
+            }
         }
         return $res;
     }

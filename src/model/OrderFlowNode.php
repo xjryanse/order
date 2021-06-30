@@ -14,6 +14,8 @@ class OrderFlowNode extends Base
     public function setFinishTimeAttr($value) {
         return self::setTimeVal($value);
     }
-
+    public function setPlanFinishTimeAttr($value) {
+        return self::setTimeVal($value);
+    }
 
 }

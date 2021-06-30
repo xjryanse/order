@@ -97,24 +97,29 @@ class OrderService {
             $data['order_prize'] = GoodsPrizeService::totalPrize( Arrays::value($data, 'goods_id') );
         }
         $goodsId     = Arrays::value($data, 'goods_id');
-        $data['goods_name']      = GoodsService::getInstance( $goodsId )->fGoodsName();
-        $data['goods_table']     = GoodsService::getInstance( $goodsId )->fGoodsTable();
-        $data['goods_table_id']  = GoodsService::getInstance( $goodsId )->fGoodsTableId();
-        $data['seller_customer_id']  = GoodsService::getInstance( $goodsId )->fCustomerId();
-        $data['seller_user_id']  = GoodsService::getInstance( $goodsId )->fSellerUserId();
-        
+        if($goodsId && GoodsService::getInstance( $goodsId )->fGoodsStatus() != 'onsale'){
+            $goodsName = GoodsService::getInstance( $data['goods_id'])->fGoodsName();
+            throw new Exception('商品'.$goodsName.'已经销售或未上架');
+        }
+        if($goodsId){
+            $data['goods_name']             = GoodsService::getInstance( $goodsId )->fGoodsName();
+            $data['goods_table']            = GoodsService::getInstance( $goodsId )->fGoodsTable();
+            $data['goods_table_id']         = GoodsService::getInstance( $goodsId )->fGoodsTableId();
+            $data['seller_customer_id']     = GoodsService::getInstance( $goodsId )->fCustomerId();
+            $data['seller_user_id']         = GoodsService::getInstance( $goodsId )->fSellerUserId();
+            $data['order_type']             = GoodsService::getInstance( $goodsId)->fSaleType();
+            $data['shop_id']        = GoodsService::getInstance( $data['goods_id'])->fShopId();
+        }
         if($data['goods_table']){
             $service        = DbOperate::getService( $data['goods_table'] );
             $info           = $service::getInstance( $data['goods_table_id'] )->get();
             //取卖家公司信息
             $data['seller_customer_id'] = Arrays::value($info, 'customer_id');
-            $data['busier_id'] = Arrays::value($data, 'busier_id') ? : Arrays::value($info, 'busier_id');
-            //临时：20210326
-            if( self::hasNoFinish($data['goods_table'], $data['goods_table_id'])){
-                throw new Exception( $data['goods_name'] .'尚有未结订单，无法下单');
-            }
+            $data['busier_id']          = Arrays::value($data, 'busier_id') ? : Arrays::value($info, 'busier_id');
         }
-        //【20210402】取消订单，删除全部未生成账单未结算的明细
+        //订单状态:默认为待支付
+        $data['order_status'] = isset($data['order_status']) ? $data['order_status'] : ORDER_NEEDPAY;        
+        
         return $data;
     }
     
@@ -156,17 +161,17 @@ class OrderService {
      * 额外输入信息
      */
     public static function extraAfterSave(&$data, $uuid) {
-        //交易关闭，重新上架订单
-        if(isset($data['order_status']) && $data['order_status'] == ORDER_CLOSE){
-            $info       = self::getInstance( $uuid )->get();
-            $service    = DbOperate::getService($info['goods_table']);
-            $goodsStatusData['goods_status'] = GOODS_ONSALE;
-            if($service::mainModel()->hasField('goods_status')){
-                $service::mainModel()->where('id',$info['goods_table_id'])->update($goodsStatusData);
+        //保存订单子表信息
+        if(Arrays::value($data, 'order_type')){
+            //②写入订单子表
+            $subService = self::getSubService( $data['order_type'] );
+            if( class_exists($subService) ){
+                $subService::save( $data );
             }
-            //订单状态更新为完结
-            $updData['is_complete']      = 1;   //0未完结，1已完结
         }
+        //③写入流程表
+        $nodeKey = camelize($data['order_type']).'BuyerOrder' ;//订单类型+买家下单
+        OrderFlowNodeService::addFlow( $uuid , $nodeKey, '客户下单', 'buyer', $data);        
         
         $goodsId                    = self::getInstance($uuid)->fGoodsId();
         $goodsInfo                  = GoodsService::getInstance( $goodsId )->get(0);
@@ -186,7 +191,24 @@ class OrderService {
      * 额外输入信息
      */
     public static function extraAfterUpdate(&$data, $uuid) {
-        $res    = self::extraAfterSave($data, $uuid);
+        //交易关闭，重新上架订单
+        if(isset($data['order_status']) && $data['order_status'] == ORDER_CLOSE){
+            $info       = self::getInstance( $uuid )->get();
+            $service    = DbOperate::getService($info['goods_table']);
+            $goodsStatusData['goods_status'] = GOODS_ONSALE;
+            if($service::mainModel()->hasField('goods_status')){
+                $service::mainModel()->where('id',$info['goods_table_id'])->update($goodsStatusData);
+            }
+            //订单状态更新为完结
+            $updData['is_complete']      = 1;   //0未完结，1已完结
+            $con[] = ['id','=',$uuid];
+            //过滤数据
+            $updData = DbOperate::dataFilter( self::mainModel()->getTable(),$updData);
+            self::mainModel()->where($con)->update($updData);
+        }
+        //尝试流程节点的更新
+        OrderFlowNodeService::checkLastNodeFinishAndNext( $uuid );
+        
         $info   = self::getInstance( $uuid )->get(0);
         //②写入订单子表
         $subService = self::getSubService( $info['order_type'] );
@@ -194,8 +216,18 @@ class OrderService {
             $subService::getInstance( $uuid )->update( $data );
         }
         
-        return $res;
+        return $data;
     }    
+    
+    public function extraPreDelete()
+    {
+        self::checkTransaction();
+        $con[] = ['order_id','=',$this->uuid];
+        $res = FinanceStatementOrderService::mainModel()->where($con)->count(1);
+        if($res){
+            throw new Exception('该订单有收付款账单，不可删除');
+        }
+    }
     
     /**
      * 删除价格数据
@@ -203,42 +235,31 @@ class OrderService {
     public function extraAfterDelete()
     {
         self::checkTransaction();
-        //删流程
+        // 删流程
         $con[] = ['order_id','=',$this->uuid];
         OrderFlowNodeService::mainModel()->where( $con )->delete();
+        // 删商品
+        OrderGoodsService::mainModel()->where( $con )->delete();
     }    
-    
-    public static function save( $data) {
-        self::checkTransaction();
-        //数据校验
-//        DataCheck::must($data, ['goods_id']);
-//        GoodsService::getInstance( $data['goods_id'])->get(0);
-        if($data['goods_id'] && GoodsService::getInstance( $data['goods_id'])->fGoodsStatus() != 'onsale'){
-            $goodsName = GoodsService::getInstance( $data['goods_id'])->fGoodsName();
-            throw new Exception('商品'.$goodsName.'已经销售或未上架');
+    /**
+     * 订单软删
+     * @return type
+     */
+    public function delete()
+    {
+        //删除前
+        if(method_exists( __CLASS__, 'extraPreDelete')){
+            $this->extraPreDelete();      //注：id在preSaveData方法中生成
         }
-        $data['seller_user_id'] = GoodsService::getInstance( $data['goods_id'])->fSellerUserId();
-        $data['order_type']     = GoodsService::getInstance( $data['goods_id'])->fSaleType();
-        $data['shop_id']        = GoodsService::getInstance( $data['goods_id'])->fShopId();
-        //订单状态:默认为待支付
-        $data['order_status'] = isset($data['order_status']) ? $data['order_status'] : ORDER_NEEDPAY;
-        //①订单保存
-        $res = self::commSave( $data );
-        if(Arrays::value($data, 'order_type')){
-            //②写入订单子表
-            $subService = self::getSubService( $data['order_type'] );
-            if( class_exists($subService) ){
-                $subService::save( $res ? $res->toArray() : [] );
-            }
+        //删除
+        $data['is_delete'] = 1;
+        $res = $this->commUpdate($data);
+        //删除后
+        if(method_exists( __CLASS__, 'extraAfterDelete')){
+            $this->extraAfterDelete();      //注：id在preSaveData方法中生成
         }
-
-        //③写入流程表
-        $nodeKey = camelize($data['order_type']).'BuyerOrder' ;//订单类型+买家下单
-        OrderFlowNodeService::addFlow($res['id'], $nodeKey, '买家下单', 'buyer', $data);
-
         return $res;
     }
-
     /**
      * 退款校验
      */
@@ -297,7 +318,7 @@ class OrderService {
         if( $role == 'seller'){
             //是否最终价格
             $isGrandPrize   = GoodsPrizeTplService::isPrizeKeyFinal( $prizeKey );
-            $sellerPrize     = GoodsPrizeService::sellerPrize( $goodsId , $prizeKey );
+            $sellerPrize     = GoodsPrizeService::keysPrize( $goodsId , $prizeKey );
             if($isGrandPrize){
                 //无缓存取价格
                 $orderInfo   = OrderService::getInstance( $this->uuid)->get(0);
@@ -305,6 +326,10 @@ class OrderService {
                 $sellerPrize = $sellerPrize - abs($payPrize);
             }
             $finalPrize = -1 * $sellerPrize;
+        }
+        //推荐人，业务员
+        if( $role == "rec_user" || $role == "busier"){
+            $finalPrize = GoodsPrizeService::keysPrize( $goodsId , $prizeKey );
         }
         return $finalPrize;
     }

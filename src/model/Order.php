@@ -14,5 +14,9 @@ class Order extends Base
     public function setOrderBusierTimeAttr($value)
     {
         return self::setTimeVal($value);
+    }
+    public function setLastPayTimeAttr($value)
+    {
+        return self::setTimeVal($value);
     }    
 }
