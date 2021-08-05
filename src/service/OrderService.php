@@ -239,7 +239,11 @@ class OrderService {
         $con[] = ['order_id','=',$this->uuid];
         OrderFlowNodeService::mainModel()->where( $con )->delete();
         // 删商品
-        OrderGoodsService::mainModel()->where( $con )->delete();
+        $goodsIds = OrderGoodsService::ids($con);
+        foreach($goodsIds as $id){
+            //为了使用触发器20210802
+            OrderGoodsService::getInstance( $id )->delete();
+        }
     }    
     /**
      * 订单软删
@@ -332,6 +336,35 @@ class OrderService {
             $finalPrize = GoodsPrizeService::keysPrize( $goodsId , $prizeKey );
         }
         return $finalPrize;
+    }
+    /**
+     * 计算订单状态
+     */
+    public function calOrderStatus(){
+        $con[] = ['order_id','=',$this->uuid];
+        $idFinish = OrderFlowNodeService::mainModel()->where($con)->where('node_key','orderFinish')->value('id');
+        if($idFinish){
+            return 'finish';    //已完成
+        }
+        $idClose = OrderFlowNodeService::mainModel()->where($con)->where('node_key','orderClose')->value('id');
+        if($idClose){
+            return 'close';     //已关闭
+        }
+        $info = $this->get(0);        
+        //待支付
+        if($info['pre_prize'] > $info['pay_prize']){
+            return 'needpay';   //待支付
+        }
+        //待发货
+        if(!$info['has_deliver']){
+            return 'toDeliver';
+        }
+        //待收货
+        if(!$info['has_receive']){
+            return 'toReceive';
+        }
+        return 'processing';    //订单进行中
+        //待评价，不在订单状态中体现，查询直接过滤has_evaluate字段
     }
     /**
      *

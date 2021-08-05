@@ -2,6 +2,8 @@
 
 namespace xjryanse\order\service;
 
+use xjryanse\goods\service\GoodsService;
+use xjryanse\logic\DataCheck;
 /**
  * 订单购物车
  */
@@ -13,6 +15,63 @@ class OrderShoppingCartService {
     protected static $mainModel;
     protected static $mainModelClass = '\\xjryanse\\order\\model\\OrderShoppingCart';
 
+    public static function cartAdd($userId, $goodsId, $number = 1){
+        $con[] = ['user_id','=',$userId];
+        $con[] = ['goods_id','=',$goodsId];
+        $info = self::find($con, 0);
+        if($info){
+            //往已有记录添数量
+            return self::mainModel()->where('id',$info['id'])->setInc('goods_number',$number);
+        } else {
+            //新增记录
+            $data['user_id']        = $userId;
+            $data['goods_id']       = $goodsId;
+            //店铺号
+            $goodsInfo = GoodsService::getInstance( $goodsId )->get();
+            $data['shop_id']        = $goodsInfo['shop_id'];
+            $data['goods_number']   = $number;
+            return self::save($data);
+        }
+    }
+    /**
+     * 钩子-保存前
+     */
+    public static function extraPreSave(&$data, $uuid) {
+        DataCheck::must($data,['user_id','goods_id']);
+    }
+    /**
+     * 钩子-保存后
+     */
+    public static function extraAfterSave(&$data, $uuid) {
+
+    }
+    /**
+     * 钩子-更新前
+     */
+    public static function extraPreUpdate(&$data, $uuid) {
+
+    }
+    /**
+     * 钩子-更新后
+     */
+    public static function extraAfterUpdate(&$data, $uuid) {
+
+    }    
+    /**
+     * 钩子-删除前
+     */
+    public function extraPreDelete()
+    {
+
+    }
+    /**
+     * 钩子-删除后
+     */
+    public function extraAfterDelete()
+    {
+
+    }    
+    
     /**
      * 使购物车的商品不可用，一般用于有用户下单，或者商品下架时使用
      */

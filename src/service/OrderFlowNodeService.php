@@ -112,20 +112,23 @@ class OrderFlowNodeService {
 
         if( !$preNode || (Arrays::value($data, 'flow_status') && $data['flow_status'] == XJRYANSE_OP_FINISH)){
             self::lastNodeFinishAndNext($info['order_id']);
-            //TODO:拆分公共
-            if( $info['node_key'] == 'orderClose'){
-                $orderUpdateData['order_status']    = ORDER_CLOSE;
-            }
+//            //TODO:拆分公共
+//            if( $info['node_key'] == 'orderClose'){
+//                $orderUpdateData['order_status']    = ORDER_CLOSE;
+//            }
         }
         //订单完成：修改订单状态
-        if( $info['node_key'] == 'orderFinish'){
-            $orderUpdateData['order_status']    = ORDER_FINISH;
-        }
+//        if( $info['node_key'] == 'orderFinish'){
+//            $orderUpdateData['order_status']    = ORDER_FINISH;
+//        }
         //更新最后节点状态
         if( Arrays::value($data, 'node_key') ){
             $orderUpdateData['lastFlowNodeRole']   = Arrays::value($data, 'operate_role');
             $orderUpdateData['orderLastFlowNode']  = Arrays::value($data, 'node_key');
         }
+        //更新订单状态：
+        $orderStatus            = OrderService::getInstance($info['order_id'])->calOrderStatus();
+        $orderUpdateData['order_status']    = $orderStatus;
         //TODO校验影响20210309
         OrderService::mainModel()->where('id',$info['order_id'])->update( $orderUpdateData );    //交易关闭
         
@@ -242,9 +245,8 @@ class OrderFlowNodeService {
             $data['is_ref'] = Arrays::value($goodsPrizeInfo,'type') == 'ref' ? 1 :  0;
             Debug::debug('【最终添加】addFinanceStatementOrder，的data',$data);
             $res = FinanceStatementOrderService::save( $data );
-            //如果是充值到余额的，直接处理
-            //如果是分账的，也直接处理
-            if( in_array(Arrays::value($goodsPrizeInfo,'to_money'),['money','sec_share']) ){
+            //如果是充值到余额的，直接处理;,'sec_share'分账会存在订单未处理完，再考虑其他异步解决方案
+            if( in_array(Arrays::value($goodsPrizeInfo,'to_money'),['money']) ){
                 $financeStatement = FinanceStatementService::statementGenerate( $res['id'] );
                 FinanceStatementService::getInstance($financeStatement['id'])->doDirect();
             }
