@@ -16,7 +16,16 @@ class Order extends Base
     {
         return self::setTimeVal($value);
     }
-    //末次支付时间
+    //预计开始
+    public function setPlanStartTimeAttr($value)
+    {
+        return self::setTimeVal($value);
+    }
+    //预计结束
+    public function setPlanFinishTimeAttr($value)
+    {
+        return self::setTimeVal($value);
+    }    //末次支付时间
     public function setLastPayTimeAttr($value)
     {
         return self::setTimeVal($value);

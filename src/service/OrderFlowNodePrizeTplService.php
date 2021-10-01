@@ -5,6 +5,7 @@ use xjryanse\system\interfaces\MainModelInterface;
 use xjryanse\logic\Arrays;
 use xjryanse\goods\service\GoodsPrizeService;
 use xjryanse\logic\Debug;
+use xjryanse\logic\Cachex;
 
 /**
  * 订单流程模板
@@ -22,10 +23,12 @@ class OrderFlowNodePrizeTplService implements MainModelInterface
      */
     public static function getPrizeKeys( $saleType ,$nodeKey )
     {
-        $con[] = ['sale_type','=',$saleType];
-        $con[] = ['node_key','=',$nodeKey ];
-        $prizeKeys = self::mainModel()->where( $con )->value('prize_keys');
-        return $prizeKeys ? explode(',', $prizeKeys): [] ;
+        return Cachex::funcGet( __CLASS__.'_'.__METHOD__.$saleType.$nodeKey, function() use ($saleType, $nodeKey){
+            $con[] = ['sale_type','=',$saleType];
+            $con[] = ['node_key','=',$nodeKey ];
+            $prizeKeys = self::mainModel()->where( $con )->value('prize_keys');
+            return $prizeKeys ? explode(',', $prizeKeys): [] ;
+        });
     }
     
     /**
@@ -37,14 +40,14 @@ class OrderFlowNodePrizeTplService implements MainModelInterface
     {
         $orderInfo  = OrderService::getInstance( $orderId )->get(0);
         $saleType   = Arrays::value($orderInfo, 'order_type');
-        $goodsId    = Arrays::value($orderInfo, 'goods_id');  
+        // $goodsId    = Arrays::value($orderInfo, 'goods_id');  
         //根据订单id和当前节点key，获取价格key
         $prizeKeys = self::getPrizeKeys($saleType, $nodeKey);
         Debug::debug('当前节点，$saleType:'.$saleType.'$nodeKey'.$nodeKey.'$prizeKeys', $prizeKeys);
         if($prizeKeys){
-            $con[]  = ['goods_id','=',$goodsId];
-            $con[]  = ['prize_key','in',$prizeKeys];
-            $prizeAll = GoodsPrizeService::sum( $con , 'prize');
+            //$goodsLists  = OrderService::getInstance( $orderId )->getOrderGoods();
+            $goodsLists  = OrderService::getInstance( $orderId )->objAttrsList('orderGoods');
+            $prizeAll = GoodsPrizeService::goodsArrGetKeysPrize( $goodsLists , $prizeKeys );
             //调试
             Debug::debug('当前节点，$nodeKey', $nodeKey);
             Debug::debug('更新订单预付金额，$prizeAll', $prizeAll);

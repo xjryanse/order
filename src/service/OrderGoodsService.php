@@ -24,7 +24,7 @@ class OrderGoodsService {
         $cond[] = ['order_id','in',$orderId];
         $orderGoodsListsRaw = self::mainModel()->alias('a')
                 ->join('w_goods b','a.goods_id = b.id')->where($cond)
-                ->field("a.id,a.order_id,a.goods_id,a.goods_name,a.amount,a.unit_prize,a.totalPrize,b.goods_pic")
+                ->field("a.id,a.order_id,a.goods_id,a.goods_name,b.goods_desc,a.amount,a.unit_prize,a.totalPrize,b.goods_pic")
                 ->select();
         $orderGoodsLists = $orderGoodsListsRaw ? $orderGoodsListsRaw->toArray() : [];
         //取图片
@@ -35,6 +35,14 @@ class OrderGoodsService {
             });
         }
         return $orderGoodsLists;
+    }
+    /**
+     * 逐步弃用，使用OrderService 同名方法
+     * 取下单的商品总价（用于计算配送费）
+     */
+    public static function orderGoodsPrize($orderId){
+        $con[] = ['order_id','=',$orderId];
+        return self::mainModel()->where($con)->value('sum( amount * unit_prize) as total');
     }
     /**
      * 钩子-保存前
