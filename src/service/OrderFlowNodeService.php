@@ -180,6 +180,7 @@ class OrderFlowNodeService {
     public static function extraAfterSave(&$data, $uuid) {
         //订单追加节点（内存中追加）
         $orderId = Arrays::value($data, 'order_id');
+        self::getInstance($uuid)->setUuData($data,true);
         OrderService::getInstance($orderId)->objAttrsPush('orderFlowNode',$data);
         //修改订单状态，更新节点等操作
         $data = self::afterOperate($data, $uuid);
@@ -438,7 +439,7 @@ class OrderFlowNodeService {
             Debug::debug('self::$lastNodeFinishCount_$isReached',$isReached);
             if($isReached){
                 self::orderNodeFinish($orderId, $nodeKey);
-                //20210921此处递归；
+                //20210921此处递归；最后一步bug：等待订单完成……
                 self::lastNodeFinishAndNext($orderId);
                 // 只要有一个达成，就return
                 return false;

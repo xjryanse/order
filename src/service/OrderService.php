@@ -64,14 +64,6 @@ class OrderService {
         ]
     ];
     
-    
-    //存储订单流程节点数组
-    protected $orderFlowNodes = [];
-    //是否有从数据库查过流程节点（刚写入订单时无数据，避免频繁查询）；
-    protected $hasOrderFlowQuery = false;
-    // 订单的商品列表
-    protected $goodsList = [];
-    protected $hasGoodsListQuery = false;
     /**
      * 返回销售类型实例
      * @return SaleTypeLogic
@@ -313,7 +305,7 @@ class OrderService {
             $data['goods_name']             = $goodsName;
             $data['goods_table']            = Arrays::value($goodsInfo,'goods_table');
             //兼容开发需求（多记录使用同商品下单）
-            $data['goods_table_id']         = $data['goods_table_id'] ? : Arrays::value($goodsInfo,'goods_table_id');
+            $data['goods_table_id']         = Arrays::value($data,'goods_table_id') ? : Arrays::value($goodsInfo,'goods_table_id');
             $data['seller_customer_id']     = Arrays::value($goodsInfo,'customer_id');
             $data['seller_user_id']         = Arrays::value($goodsInfo,'seller_user_id');
             $data['order_type']             = Arrays::value($goodsInfo,'sale_type');
@@ -451,7 +443,7 @@ class OrderService {
     {
         self::checkTransaction();
         $con[] = ['order_id','=',$this->uuid];
-        $res = FinanceStatementOrderService::mainModel()->where($con)->count(1);
+        $res = FinanceStatementOrderService::mainModel()->master()->where($con)->count(1);
         if($res){
             throw new Exception('该订单有收付款账单，不可删除');
         }
@@ -490,6 +482,20 @@ class OrderService {
         //最后订单才能被删
         $res = $this->delete();
         return $res;
+    }
+    /**
+     * 订单是否可删除
+     */
+    public function canDelete(){
+        $financeStatementOrderSql   = FinanceStatementOrderService::mainModel()->where('order_id',$this->uuid)->field('count(1)')->buildSql();
+        $financeStatementSql        = FinanceStatementService::mainModel()->where('order_id',$this->uuid)->field('count(1)')->buildSql();
+        $userAccountLogSql          = UserAccountLogService::mainModel()->where('from_table_id',$this->uuid)->field('count(1)')->buildSql();
+        
+        $sqlAll = 'select '.$financeStatementOrderSql.' as financeStatementOrder,'.$financeStatementSql.' as financeStatement,'.$userAccountLogSql.' as userAccountLog';
+        dump($financeStatementOrderSql);
+        dump($financeStatementSql);
+        dump($userAccountLogSql);
+        dump($sqlAll);
     }
     /**
      * 订单软删
