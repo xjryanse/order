@@ -4,6 +4,7 @@ namespace xjryanse\order\logic;
 use xjryanse\order\service\OrderFlowNodeTplService;
 use xjryanse\goods\service\GoodsTypePrizeKeyService;
 use xjryanse\goods\service\GoodsPrizeKeyService;
+use xjryanse\logic\Cachex;
 use xjryanse\logic\Debug;
 /**
  * 销售类型逻辑
@@ -110,18 +111,21 @@ class SaleTypeLogic
      */
     public function hasPrizeKey($prizeKey){
         $prizeKeys = GoodsTypePrizeKeyService::getPrizeKeys($this->uuid);
+        Debug::debug('$prizeKeys',$prizeKeys);
         return in_array($prizeKey, $prizeKeys);        
     }
     /**
      * 获取买家支付的价格key；用于计算订单总价；包含了商品价格；配送费；包装费等
      */
     public function buyerPayPrizeKey(){
-        $prizeKeys = GoodsTypePrizeKeyService::getPrizeKeys($this->uuid);
-        $con[] = ['from_role','=','buyer'];
-        $con[] = ['prize_key','in',$prizeKeys];
-        $con[] = ['change_type','=',1];
-        $con[] = ['company_id','=',self::$companyId];
+        return Cachex::funcGet(__CLASS__.__FUNCTION__.$this->uuid, function(){
+            $prizeKeys = GoodsTypePrizeKeyService::getPrizeKeys($this->uuid);
+            $con[] = ['from_role','=','buyer'];
+            $con[] = ['prize_key','in',$prizeKeys];
+            $con[] = ['change_type','=',1];
+            $con[] = ['company_id','=',self::$companyId];
 
-        return GoodsPrizeKeyService::mainModel()->where($con)->column('prize_key');
+            return GoodsPrizeKeyService::mainModel()->where($con)->column('prize_key');
+        },true);
     }
 }

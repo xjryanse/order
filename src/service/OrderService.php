@@ -2,25 +2,42 @@
 
 namespace xjryanse\order\service;
 
+use app\station\service\StationService;
+use app\circuit\service\CircuitBusService;
+use app\tour\service\TourPassengerService;
+use xjryanse\customer\service\CustomerUserService;
 use xjryanse\goods\service\GoodsService;
 use xjryanse\goods\service\GoodsPrizeService;
 use xjryanse\goods\service\GoodsPrizeTplService;
 use xjryanse\goods\service\GoodsPrizeKeyService;
 use xjryanse\finance\service\FinanceStatementService;
 use xjryanse\finance\service\FinanceStatementOrderService;
+use xjryanse\finance\service\FinanceAccountLogService;
+use xjryanse\wechat\service\WechatWePubFansUserService;
+use xjryanse\order\service\OrderPassengerService;
 use xjryanse\order\service\OrderGoodsService;
 use xjryanse\order\service\OrderIncomeDistributeService;
 use xjryanse\order\service\OrderFlowNodeService;
+use xjryanse\user\service\UserService;
 use xjryanse\user\service\UserAccountLogService;
 use xjryanse\system\service\SystemFileService;
 use xjryanse\user\logic\ScoreLogic;
 use xjryanse\order\logic\SaleTypeLogic;
+use xjryanse\wechat\service\WechatWePubTemplateMsgLogService;
+use xjryanse\logic\DataCheck;
+use xjryanse\logic\DbOperate;
 use xjryanse\logic\Arrays;
 use xjryanse\logic\Arrays2d;
+use xjryanse\logic\Strings;
 use xjryanse\logic\Cachex;
 use xjryanse\logic\Debug;
+// 20220906兼容前端，排车页面，是否有更优方案？？
+// use xjryanse\logic\Device;
 use think\Db;
 use Exception;
+/**临时，需要拆解 - 20211115 ***/
+use app\order\service\OrderBaoBusService;
+
 /**
  * 订单总表
  */
@@ -57,13 +74,55 @@ class OrderService {
             'keyField'  =>'order_id',
             'master'    =>true
         ],
+        'orderBuses'=>[
+            'class'     =>'\\app\\order\\service\\OrderBaoBusService',
+            'keyField'  =>'order_id',
+            'master'    =>true
+        ],
+        'orderPassengers'=>[
+            'class'     =>'\\xjryanse\\order\\service\\OrderPassengerService',
+            'keyField'  =>'order_id',
+            'master'    =>true
+        ],
+        'tourPassengers'=>[
+            'class'     =>'\\app\\tour\\service\\TourPassengerService',
+            'keyField'  =>'order_id',
+            'master'    =>true
+        ],
         'financeStatementOrder'=>[
             'class'     =>'\\xjryanse\\finance\\service\\FinanceStatementOrderService',
             'keyField'  =>'order_id',
             'master'    =>true
+        ],
+        'financeStaffFee'=>[
+            'class'     =>'\\xjryanse\\finance\\service\\FinanceStaffFeeService',
+            'keyField'  =>'order_id',
+            'master'    =>true
         ]
     ];
-    
+    /**
+     * 20220918客户访问权限校验；增加安全性
+     */
+    public function customerAuthCheck(){
+        $info       = $this->get();
+        if($info['user_id'] == session(SESSION_USER_ID)){
+            return true;
+        }
+        $cond[] = ['is_manager','=',1];
+        $cond[] = ['user_id','=',session(SESSION_USER_ID)];
+        $cond[] = ['customer_id','=',$info['customer_id']];
+        $isCustomer = CustomerUserService::mainModel()->where($cond)->count();
+        return $isCustomer ? true :false;
+    }
+    /**
+     * 避免外部直接调用save方法；
+     * 如需下单，请调用OrderService::order();
+     * @param type $data
+     * @return type
+     */
+    protected static function save( $data){
+        return self::commSave($data);
+    }
     /**
      * 返回销售类型实例
      * @return SaleTypeLogic
@@ -73,6 +132,45 @@ class OrderService {
         $companyId  = $this->fCompanyId();
         SaleTypeLogic::setCompanyId($companyId);
         return SaleTypeLogic::getInstance($saleType);
+    }
+    /**
+     * 20220527
+     * 查询提取账户类型
+     */
+    public function getFinanceAccountType(){
+        $statementOrders = $this->objAttrsList('financeStatementOrder');
+        //订单id，取statementOrder表的statementId;
+        $con[] = ['order_id','=',$this->uuid];
+        //20220608加条件
+        $con[] = ['statement_cate','=','buyer'];                 
+        $filterArr = Arrays2d::listFilter($statementOrders, $con);
+        $statementIds = array_unique(array_column($filterArr,'statement_id'));
+
+        return FinanceAccountLogService::statementIdsGetAccountType($statementIds);
+    }
+    /**
+     * 20220903:获取客户已付金额
+     */
+    public function getBuyerPayPrize(){
+        $statementOrders = $this->objAttrsList('financeStatementOrder');
+        
+        $con[]     = ['has_settle','=',1];
+        $con[]     = ['statement_cate','=','buyer'];
+        $filterArr = Arrays2d::listFilter($statementOrders, $con);
+        $money = array_sum(array_column($filterArr,'need_pay_prize'));
+        return $money;
+    }
+    /**
+     * 20220903:获取已付供应商金额
+     */
+    public function getPaySellerPrize(){
+        $statementOrders = $this->objAttrsList('financeStatementOrder');
+        
+        $con[]     = ['has_settle','=',1];
+        $con[]     = ['statement_cate','=','seller'];
+        $filterArr = Arrays2d::listFilter($statementOrders, $con);
+        $money = array_sum(array_column($filterArr,'need_pay_prize'));
+        return $money;
     }
     /**
      * 带了一些详情信息的订单列表，一般用于用户端口前端显示
@@ -95,7 +193,7 @@ class OrderService {
         foreach( $orderGoodsLists as &$v){
             $picId = $v['goods_pic'];
             $v['goodsPic'] = Cachex::funcGet('FileData_'.$picId, function() use ($picId){
-                return SystemFileService::mainModel()->where('id', $picId )->field('id,file_path,file_path as rawPath')->find()? : [];
+                return $picId && SystemFileService::mainModel()->where('id', $picId )->field('id,file_path,file_path as rawPath')->find()? : [];
             });
         }
         // 取账单
@@ -119,7 +217,9 @@ class OrderService {
                     $v['buyerNeedPayStatements'][] = $statementItem;
                 }
             }
-            
+            $v['plan_start_time'] = date('Y-m-d H:i',strtotime($v['plan_start_time']));
+            $v['plan_finish_time'] = date('Y-m-d H:i',strtotime($v['plan_finish_time']));
+
             //减少传输带宽
             $lastFlowNode       = $v['lastFlowNode'] ? : [];
             $v['lastFlowNode']  = Arrays::getByKeys($lastFlowNode, ['id','node_key','node_name','operate_role','flow_status','create_time']);
@@ -150,14 +250,18 @@ class OrderService {
         $goodsInfos = GoodsService::batchGet( array_column($goodsArr,'goods_id') );
         foreach( $goodsArr as &$v){
             $goodsInfo          = Arrays::value($goodsInfos, $v['goods_id'],[]);
-            $v['goods_name']    = Arrays::value($goodsInfo,'goods_name');
+            if(!isset($v['goods_name']) || !$v['goods_name']){
+                $v['goods_name']    = Arrays::value($goodsInfo,'goods_name');
+            }
             $v['unit_prize']    = Arrays::value($goodsInfo,'goodsPrize');
             if(!$orderGoodsName){
                 $orderGoodsName = $v['goods_name'];
             }
         }
+        //20220608:兼容可外部传入销售类型
+        $saleType = $goodsArr ? GoodsService::getInstance( $goodsArr[0]['goods_id'] )->fSaleType() : '';
         //组织商品名称
-        if( array_sum(array_column($goodsArr, 'amount')) > 1){
+        if( array_sum(array_column($goodsArr, 'amount')) > 1 && $saleType == 'normal' ){
             $orderGoodsName .= ' 等'.array_sum(array_column($goodsArr, 'amount')).'件商品';
         }
         $orderData['goods_name'] = $orderGoodsName;
@@ -166,19 +270,73 @@ class OrderService {
             //单商品
             $orderData['goods_id']      = $goodsArr[0]['goods_id'];
             $orderData['amount']        = $goodsArr[0]['amount'] ? : 1;
-            $orderData['order_type']    = GoodsService::getInstance( $goodsArr[0]['goods_id'] )->fSaleType();
+            $orderData['order_type']    = $saleType;
             // 适用于某表多个记录使用同一个商品下单的情况（比如开发需求）
             if(Arrays::value($goodsArr[0], 'goodsTableId')){
                 $orderData['goods_table_id'] = Arrays::value($goodsArr[0], 'goodsTableId');
             }
         }
-        $orderData['id'] = self::mainModel()->newId();
         Db::startTrans();
             //先保存明细（主订单的保存有触发动作会用到）
-            OrderGoodsService::saveAll($goodsArr,['order_id'=>$orderData['id']],0);
+            if( !isset($orderData['id']) || !self::getInstance($orderData['id'])->get() ) {
+                //会存在更新订单：20211105:
+                //20220617,从事务外部搬到内部
+                $orderData['id'] = self::mainModel()->newId();
+                OrderGoodsService::saveAll($goodsArr, ['order_id'=>$orderData['id']], 0 );
+            }
             //再保存主订单
-            $res    = self::save($orderData);
+            $res    = self::saveGetId($orderData);
         Db::commit();
+        return $res;
+    }
+    /**
+     * 20220621，优化性能
+     * @param type $goodsArr
+     * @param type $orderData
+     * @return type
+     */
+    public static function orderRam( $goodsArr ,$orderData = [] ){
+        $orderGoodsName = '';
+        //一次性取商品信息
+        $goodsInfos = GoodsService::batchGet( array_column($goodsArr,'goods_id') );
+        foreach( $goodsArr as &$v){
+            $goodsInfo          = Arrays::value($goodsInfos, $v['goods_id'],[]);
+            if(!isset($v['goods_name']) || !$v['goods_name']){
+                $v['goods_name']    = Arrays::value($goodsInfo,'goods_name');
+            }
+            $v['unit_prize']    = Arrays::value($goodsInfo,'goodsPrize');
+            if(!$orderGoodsName){
+                $orderGoodsName = $v['goods_name'];
+            }
+        }
+        //20220608:兼容可外部传入销售类型
+        $saleType = $goodsArr ? GoodsService::getInstance( $goodsArr[0]['goods_id'] )->fSaleType() : '';
+        //组织商品名称
+        if( array_sum(array_column($goodsArr, 'amount')) > 1 && $saleType == 'normal' ){
+            $orderGoodsName .= ' 等'.array_sum(array_column($goodsArr, 'amount')).'件商品';
+        }
+        $orderData['goods_name'] = $orderGoodsName;
+
+        if(count($goodsArr) == 1){
+            //单商品
+            $orderData['goods_id']      = $goodsArr[0]['goods_id'];
+            $orderData['amount']        = $goodsArr[0]['amount'] ? : 1;
+            $orderData['order_type']    = $saleType;
+            // 适用于某表多个记录使用同一个商品下单的情况（比如开发需求）
+            if(Arrays::value($goodsArr[0], 'goodsTableId')){
+                $orderData['goods_table_id'] = Arrays::value($goodsArr[0], 'goodsTableId');
+            }
+        }
+        //先保存明细（主订单的保存有触发动作会用到）
+        if( !isset($orderData['id']) || !self::getInstance($orderData['id'])->get() ) {
+            //会存在更新订单：20211105:
+            //20220617,从事务外部搬到内部
+            $orderData['id'] = self::mainModel()->newId();
+            OrderGoodsService::saveAllRam($goodsArr, ['order_id'=>$orderData['id']], 0 );
+        }
+        //再保存主订单
+        $res    = self::saveGetIdRam($orderData);
+
         return $res;
     }
     /**
@@ -188,6 +346,7 @@ class OrderService {
     public static function calOrderPrize( $goodsArr ){
         $goodsIds   = array_column($goodsArr,'goods_id') ;
         $goodsInfos = GoodsService::batchGet( $goodsIds );
+        Debug::debug(__CLASS__.__FUNCTION__.'$goodsInfos',$goodsInfos);
         $orderPrize = 0;
         foreach( $goodsArr as &$v){
             $goodsInfo          = Arrays::value($goodsInfos, $v['goods_id'],[]);
@@ -204,10 +363,29 @@ class OrderService {
         $orderId                = $this->uuid;
         // 订单总价
         //$data['order_prize']    = OrderGoodsService::orderGoodsPrize($orderId);
-        $data['order_prize']    = GoodsPrizeKeyService::orderPrize($orderId);
+        $orderInfo = $this->get();
+        $classStr = self::orderTypeClass($orderInfo['order_type']);
+        if(class_exists($classStr)){
+            //20220615:计算订单价格
+            $data['order_prize'] = $classStr::getInstance($orderId)->calOrderPrize();
+            $data['need_outcome_prize'] = $classStr::getInstance($orderId)->calNeedOutcomePrize();
+        } else {
+            $data['order_prize'] = GoodsPrizeKeyService::orderPrize($orderId);
+            //TODO
+            $data['need_outcome_prize'] = '999';
+        }
         // 配送费:配送费专用key
         $data['deliver_prize']  = GoodsPrizeKeyService::orderPrizeKeyGetPrize($orderId, 'DeliverPrize');
+        Debug::debug(__CLASS__.'_'.__FUNCTION__.'$data',$data);
         return $data;
+    }
+    /**
+     * 20220615 订单类型取映射处理类库
+     */
+    public static function orderTypeClass($orderType){
+        $typeStr    = Strings::uncamelize($orderType);
+        $tableName  = config('database.prefix').'order_'.$typeStr;
+        return DbOperate::getService($tableName);
     }
     
     /**
@@ -239,25 +417,7 @@ class OrderService {
     }
     
     /*********************************************************************************/
-//    /**
-//     * 获取订单商品
-//     */
-//    public function getOrderGoods(){
-//        Debug::debug('获取前',$this->goodsList);
-//        if(!$this->goodsList && !$this->hasGoodsListQuery){
-//            $cond[]     = ['order_id','=',$this->uuid];
-//            $lists      = OrderGoodsService::listSetUudata($cond);
-//            $this->goodsList = $lists ? $lists->toArray() : [];
-//            //已经有查过了就不再查了，即使为空
-//            $this->hasGoodsListQuery = true;
-//        }
-//        return $this->goodsList;
-//    }
-//    
-//    public function setOrderGoods($data){
-//        $this->goodsList            = $data;
-//        $this->hasGoodsListQuery    = true;
-//    }
+
     /**
      * 是否有未完订单
      * @param type $goodsTable
@@ -272,6 +432,13 @@ class OrderService {
         return self::count($con);
     }
     /**
+     * 订单已付？？
+     */
+    public function hasPay(){
+        $info = $this->get();
+        return $info && ($info['pay_prize'] - abs( $info['refund_prize'])) >= $info['pre_prize'];
+    }
+    /**
      * 获取订单的时间状态
      * @return type
      */
@@ -279,6 +446,12 @@ class OrderService {
         //用于流程识别
         $keysArr = ['BuyerReceive','SellerDeliverGoods','BuyerPay','orderFinish'];
         $timeArr = OrderFlowNodeService::getOrderTimeArr($this->uuid, $keysArr);
+        Debug::debug('orderTimeArr的$timeArr',$timeArr);
+        foreach($timeArr as &$v){
+            if($v == '0000-00-00 00:00:00'){
+                $v = null;
+            }
+        }
         //用于替换成order表中的字段
         $keys = [
                 'BuyerReceive'=>'order_receive_time',
@@ -290,10 +463,76 @@ class OrderService {
         return Arrays::keyReplace($timeArr, $keys);        
     }
     
+    public function info( $cache = 2  )
+    {
+        $orderInfo = $this->commInfo( $cache );
+        if($orderInfo['is_delete']){
+            return [];
+        }
+        $id = $this->uuid;
+        $con[] = ['order_id','=',$id];
+        //【取流程】
+        $orderInfo['flowNodes']     = OrderFlowNodeService::lists($con,'id desc');
+        //【客户信息】
+        $orderInfo['userInfo']      = UserService::mainModel()->where('id',$orderInfo['user_id'])->field('id,username,nickname,realname,headimg,phone')->find();
+        //【订单商品】
+        $orderInfo['orderGoods']    = OrderGoodsService::orderGoodsInfo($id);
+        //【取费用】
+        //$orderInfo['financeStatements']         = FinanceStatementOrderService::orderStatementLists($id);
+        $orderInfo['financeStatements'] = OrderService::getInstance($id)->objAttrsList('financeStatementOrder');
+
+        $condStatement   = [];
+        $condStatement[] = ['order_id','in',$id];
+        $condStatement[] = ['has_settle','=',0];
+        $condStatement[] = ['statement_cate','=','buyer'];
+        //20220902:增加改变类型
+        $condStatement[] = ['change_type','=',1];
+        $statementLists = FinanceStatementOrderService::mainModel()->where($condStatement)->field('id,need_pay_prize,order_id')->select();
+        $orderInfo['buyerNeedPayStatements']    = $statementLists;
+        // 支付剩余时间：15分钟：按下单时间计算
+        $remainSeconds = strtotime($orderInfo['create_time']) - time() + 900 ;
+        $orderInfo['payRemainSeconds']  = $remainSeconds > 0 ? $remainSeconds : 0;
+        // 模板消息发送记录
+        $cone[] = ['order_id','in',$id];
+        $flowNodeIds = OrderFlowNodeService::mainModel()->where($cone)->column('id');
+        $orderInfo['tplMsgs'] = WechatWePubTemplateMsgLogService::listByFromTableId( array_merge($flowNodeIds,[$id]) );
+        //是否超过时限；超过不可退款
+        $orderInfo['isExpire'] = $orderInfo['plan_start_time'] && (time() - strtotime($orderInfo['plan_start_time'])) > 0 ? true :false ;
+        // 是否今日订单
+        if($orderInfo['company_id'] == '3'){
+            $orderInfo['isToday'] = date('Y-m-d', strtotime($orderInfo['plan_start_time'])) == date('Y-m-d');
+        } else {
+            $orderInfo['isToday'] = false;
+        }
+        //20220906:控制业务员平板显示
+        //$orderInfo['isIpad']    = Device::isIpad() ? 1: 0;
+        return $orderInfo;
+    }
+    
+    /**
+     * 是否指定小时内小时内
+     */
+    public function inHours( $hours )
+    {
+        if(!$hours){
+            return false;
+        }
+        $info = $this->get();
+        Debug::debug('planStartTime',$info['plan_start_time']);
+        Debug::debug('当前时间',date('Y-m-d H:i:s',strtotime('+'. $hours .' hours')));
+
+        if( $info['plan_start_time']  < date('Y-m-d H:i:s',strtotime('+'. $hours .' hours'))){
+            return true;
+        }
+        return false;
+    }
     /**
      * 额外输入信息
      */
     public static function extraPreSave(&$data, $uuid) {
+        DataCheck::must($data, ['user_id']);
+        self::checkFinanceTimeLock(Arrays::value($data, 'plan_start_time'));
+        UserService::getInstance($data['user_id'])->checkUserPhone();
         //20210812，测到金额bug注释:由::order方法控制
         $goodsId     = Arrays::value($data, 'goods_id');
         if($goodsId){
@@ -301,16 +540,26 @@ class OrderService {
             $goodsName   = Arrays::value($goodsInfo,'goods_name');
             if(Arrays::value($goodsInfo,'goods_status') != 'onsale'){
                 throw new Exception('商品'.$goodsName.'已经销售或未上架');
-            }            
-            $data['goods_name']             = $goodsName;
+            }
+            // 20220213可外部传，兼容支付账单体现订单概要信息
+            if(!isset($data['goods_name'] ) || !$data['goods_name']){
+                $data['goods_name']             = $goodsName;
+            }
             $data['goods_table']            = Arrays::value($goodsInfo,'goods_table');
             //兼容开发需求（多记录使用同商品下单）
             $data['goods_table_id']         = Arrays::value($data,'goods_table_id') ? : Arrays::value($goodsInfo,'goods_table_id');
-            $data['seller_customer_id']     = Arrays::value($goodsInfo,'customer_id');
-            $data['seller_user_id']         = Arrays::value($goodsInfo,'seller_user_id');
+            $data['seller_customer_id']     = Arrays::value($data,'seller_customer_id') ? : Arrays::value($goodsInfo,'customer_id');
+            $data['seller_user_id']         = Arrays::value($data,'seller_user_id') ? : Arrays::value($goodsInfo,'seller_user_id');
             $data['order_type']             = Arrays::value($goodsInfo,'sale_type');
             $data['shop_id']                = Arrays::value($goodsInfo,'shop_id');
         }
+        //客户和用户进行绑定,方便下次下单
+        if($data['customer_id'] && $data['user_id']){
+            CustomerUserService::bind($data['customer_id'], $data['user_id']);
+        }
+        //
+        Debug::debug(__CLASS__.__FUNCTION__,$data);
+        
         return $data;
     }
     
@@ -318,72 +567,180 @@ class OrderService {
     {
         self::checkTransaction();
         $info = self::getInstance($uuid)->get();
-        if(isset($data['is_cancel']) && $info['is_complete']){
-            throw new Exception('已结订单不可取消');
+
+        self::checkFinanceTimeLock(Arrays::value($info, 'plan_start_time'));
+        if(Arrays::value($data, 'plan_start_time')){
+            self::checkFinanceTimeLock(Arrays::value($data, 'plan_start_time'));
         }
 
+        if(isset($data['is_cancel']) && $data['is_cancel'] && $data['is_cancel'] != $info['is_cancel']){
+            if($info['is_complete']){
+                throw new Exception('已结订单不可取消'.$uuid);
+            }
+            if(!isset($data['cancel_by'])){
+                throw new Exception('未指定取消人cancel_by'.$uuid);
+            }
+        }
+        //②写入订单子表
+        $subService = self::getSubService( $info['order_type'] );
+        Debug::debug('$subService',$subService);
+        if( $info['order_type'] && class_exists($subService) ){
+            $subService::getInstance( $uuid )->update( $data );
+        }
+        $infoArr = $info ? $info->toArray() : [];
+        // 20221115：获取差异数组
+        $diffInfo = Arrays::diffArr($infoArr, $data);
+        OrderChangeLogService::log('orderChange', $uuid, '', $diffInfo);
+
         return $data;
-    }
-    /**
-     * 额外详情信息
-     */
-//    protected static function extraDetail( &$item ,$uuid )
-//    {
-////        return false;
-//        //添加分表数据:按类型提取分表服务类
-//        if(!$item){
-//            return false;
-//        }
-//        //20210201性能优化调整
-//        self::commExtraDetail($item,$uuid );
-//        //订单末条流程
-//        $item['lastFlowNode'] = OrderFlowNodeService::orderLastFlow( $uuid );
-//        return $item;
-//    }
-    
+    }    
     
     public static function extraDetails( $ids ){
-        //数组返回多个，非数组返回一个
-        $isMulti = is_array($ids);
-        if(!is_array($ids)){
-            $ids = [$ids];
-        }
-        //Debug::debug('入参id数组',$ids);
-        $con[] = ['id','in',$ids];
-        $listRaw = self::mainModel()->where($con)->select();
-        //写入内存
-        foreach($listRaw as $v){
-            self::getInstance($v['id'])->setUuData($v,true);  //强制写入
-        }
-        $lists = $listRaw ? $listRaw->toArray() : [];
-        // 获取订单流程
-        $cond[] = ['order_id','in',$ids];
-        $cond[] = ['is_delete','=',0];
-        $orderFlowNodesRaw  = OrderFlowNodeService::mainModel()->master()->where($cond)->select();
-        //Debug::debug('extraDetails中查询方法',$orderFlowNodesRaw);
-        //写入内存
-        foreach($orderFlowNodesRaw as $v){
-            OrderFlowNodeService::getInstance($v['id'])->setUuData($v,true);  //强制写入
-        }
-        $orderFlowNodes     = $orderFlowNodesRaw ? $orderFlowNodesRaw->toArray() : [];
-        foreach($ids as $id){
-            $orderNodes = Arrays2d::listByFieldValue($orderFlowNodes, 'order_id', $id);
-            //Debug::debug('setOrderFlowNodes的'.$id,$orderNodes);
-            // self::getInstance($id)->setOrderFlowNodes($orderNodes);
-            self::getInstance($id)->objAttrsSet('orderFlowNode',$orderNodes);
-            //Debug::debug('setOrderFlowNodes后的实例'.$id,self::getInstance($id));
-        }
+        return self::commExtraDetails($ids, function($lists) use ($ids){
+            // 转化成数组
+            $ids = $ids ? (is_array($ids) ? $ids : [$ids] ) : [];
+            //Debug::debug('入参id数组',$ids);
+            // 获取订单流程
+            $cond[] = ['order_id','in',$ids];
+            $cond[] = ['is_delete','=',0];
+            $orderFlowNodesRaw  = OrderFlowNodeService::mainModel()->master()->where($cond)->select();
+            //Debug::debug('extraDetails中查询方法',$orderFlowNodesRaw);
+            //写入内存
+            foreach($orderFlowNodesRaw as $v){
+                OrderFlowNodeService::getInstance($v['id'])->setUuData($v,true);  //强制写入
+            }
+            $orderFlowNodes     = $orderFlowNodesRaw ? $orderFlowNodesRaw->toArray() : [];
+            foreach($ids as $id){
+                $orderNodes = Arrays2d::listByFieldValue($orderFlowNodes, 'order_id', $id);
+                //Debug::debug('setOrderFlowNodes的'.$id,$orderNodes);
+                // self::getInstance($id)->setOrderFlowNodes($orderNodes);
+                self::getInstance($id)->objAttrsSet('orderFlowNode',$orderNodes);
+                //Debug::debug('setOrderFlowNodes后的实例'.$id,self::getInstance($id));
+            }
+            // 先批量查询一次
+            $circuitBusIds = Arrays2d::uniqueColumn($lists, 'circuit_bus_id');
+            $conCB[] = ['id','in',$circuitBusIds];
+            // 批量查询一次，提升性能
+            $circuitBusLists = CircuitBusService::listsArr($conCB);
+            //20211213;站点id数组
+            $stationIds     = array_unique(array_merge(array_column($lists,'from_station_id'),array_column($lists,'to_station_id')));
+            $stationAttr    = Arrays::isEmpty($stationIds) ? [] : StationService::mainModel()->where([['id','in',$stationIds]])->column('station','id');
+            //乘客
+            $passengerArr   = OrderPassengerService::orderGroupBatchSelect($ids);
+            //乘客
+            $tourPassengerArr   = TourPassengerService::groupBatchSelect('order_id',$ids);
+            //20230303:团客
+            $tourPassengerCount = TourPassengerService::groupBatchCount('order_id',$ids);
+            //订单车辆
+            // $baoOrderIds = CircuitBusService::baoOrderIds($circuitBusIds);
+            $baoOrderIds    = Arrays2d::uniqueColumn($circuitBusLists, 'bao_order_id');
+            // 批量查询一次，提升性能
+            self::listsArr([['id','in',$baoOrderIds]]);
+            $orderBusArr    = OrderBaoBusService::orderBusBatchSelect(array_merge($ids,$baoOrderIds));
+            //订单模板消息
+            $wechatWePubTemplateMsgLogCount = WechatWePubTemplateMsgLogService::groupBatchCount('from_table_id', $ids);
+            //20220610,用于提取后向订单id
+            $conf[] = ['pre_order_id','in',$ids] ; 
+            //20220615,修bug
+            $conf[] = ['is_delete','=',0] ; 
+            $afterOrders    = self::mainModel()->where($conf)->field('id,pre_order_id')->select();
+            $afterOrdersArr = $afterOrders ? $afterOrders->toArray() : [];
+            $afterOrderObj  = Arrays2d::fieldSetKey($afterOrdersArr, 'pre_order_id');
+            //20220813：用户绑定统计
+            $wechatWePubBindCount   = WechatWePubFansUserService::groupBatchCount('user_id', array_column($lists,'user_id'));
+            
+            $stOrderCount           = FinanceStatementOrderService::groupBatchCount('order_id', $ids);
+            //订单商品记录数
+            $orderGoodsCount        = OrderGoodsService::groupBatchCount('order_id', $ids);
+
+            foreach($lists as &$item){
+                //团客数
+                $item['tourPassengerCount'] = Arrays::value($tourPassengerCount, $item['id'],0);
+                //20220730兼容前端；TODO更优？？
+                $item['need_invoice'] = strval($item['need_invoice']);
+                $item['lastFlowNode'] = OrderFlowNodeService::orderLastFlow( $item['id'] );
+                //20211115:优化
+                if($item['order_type'] == 'bao'){
+                    //$item['baoBuses'] = OrderBaoBusService::orderBusList( $item['id'] );
+                    $item['baoBuses'] = Arrays::value($orderBusArr, $item['id'],[]);
+                    // 20220904：趟数
+                    $item['baoBusesCount']  = count($item['baoBuses']);
+                    $item['route']          = count($item['baoBuses']) ? $item['baoBuses'][0]['route'] : '';
+                    $item['route']         .= count($item['baoBuses']) > 1 ? '等' : '';
+                    //20220815:是否有已排车辆（控制客户端订单不可取消）
+                    $item['hasArrangedBus'] = $item['baoBuses'] && array_unique(array_column($item['baoBuses'],'bus_id'))[0] != '' ? 1 :0;
+                }
+                if(in_array($item['order_type'],['bao','pin','ding'])){
+                    //订单乘客
+                    $item['orderPassengers']        = Arrays::value($passengerArr, $item['id']) ? : [];
+                    $item['orderPassengerCount']    = count($item['orderPassengers']);
+                    $item['orderPassengerName']     = implode(',',array_column($item['orderPassengers'],'realname'));
+                    // 20230214:所有的乘客是否已排好了车辆
+                    $item['orderPassengerAllHasBus'] = OrderPassengerService::allHasBus($item['orderPassengers']) ? 1: 0;
+                }
+                // 20230314:旅游团
+                if(in_array($item['order_type'],['tour'])){
+                    //订单乘客
+                    $item['tourPassengers']         = Arrays::value($tourPassengerArr, $item['id']) ? : [];
+                    $item['tourPassengerCount']     = count($item['tourPassengers']);
+                }
+                if(in_array($item['order_type'],['pin'])){
+                    $baoOrderId = CircuitBusService::getInstance($item['circuit_bus_id'])->fBaoOrderId();
+                    if($baoOrderId){
+                        //订单乘客
+                        $item['tempBaoOrderId'] = $baoOrderId;
+                        $item['buses'] = $baoOrderId 
+                                ? Arrays2d::getByKeys(Arrays::value($orderBusArr, $baoOrderId,[]),['id','licence_plate']) 
+                                : [] ;
+                    } else {
+                        $item['tempBaoOrderId'] = '';
+                        $item['buses'] = [] ;
+                    }
+                }
+                $item['fromStationName']    =   Arrays::value($stationAttr, $item['from_station_id']);
+                $item['toStationName']      =   Arrays::value($stationAttr, $item['to_station_id']);
+                //微信模板消息数
+                $item['wechatWePubTemplateMsgLogCount'] = Arrays::value($wechatWePubTemplateMsgLogCount, $item['id'],0);
+                // 下单用户是否已绑定微信
+                $item['isUserBind']         = Arrays::value($wechatWePubBindCount, $item['user_id']) ? 1 : 0;
+                // 20220609 circuitBusId是否有值：用于控制页面显示
+                $item['hasCircuitBus']      = $item['circuit_bus_id'] ? 1 : 0;
+                $item['afterOrderId']       = isset($afterOrderObj[$item['id']]) ? $afterOrderObj[$item['id']]['id'] : '';
+                // 20220610是否有前序订单
+                $item['hasPreOrder']        = $item['pre_order_id'] ? 1: 0;
+                // 20220610是否有后序订单（后序由前序计算）
+                $item['hasAfterOrder']      = $item['afterOrderId'] ? 1: 0;
+                // 20220812:客户已签章
+                $item['hasBuyerSign']       = $item['buyer_sign'] ? 1: 0;
+                // 20220812:供应商已签章
+                $item['hasSellerSign']          = $item['seller_sign'] ? 1: 0;
+                // 订单时间是否已过：控制不可取消
+                $item['isTimePass']             = $item['plan_start_time'] && strtotime($item['plan_start_time']) < time() ? 1 :0;
+                // 20220904：当前用户是否订单创建者。用于前台客户页面控制是否可删除
+                $item['isCreater']              = $item['creater'] == session(SESSION_USER_ID) ? 1: 0;
+                // 是否有资金变动记录
+                $item['hasMoneyPay']            = abs($item['pay_prize']) || abs($item['refund_prize']) > 0 ? 1: 0;
+                // 账单数
+                $item['statementOrderCount']    = Arrays::value($stOrderCount, $item['id'],0);
+                // 订单商品记录数
+                $item['orderGoodsCount']        = Arrays::value($orderGoodsCount, $item['id'],0);
+            }
+            return $lists;
+        });
         
-        foreach($lists as &$item){
-            $item['lastFlowNode'] = OrderFlowNodeService::orderLastFlow( $item['id'] );
-        }
-        return $isMulti ? $lists : $lists[0];
+        
     }
     /**
      * 额外输入信息
      */
     public static function extraAfterSave(&$data, $uuid) {
         OrderFlowNodeService::lastNodeFinishAndNext($uuid);
+        //②写入订单子表
+        $subService = self::getSubService( $data['order_type'] );
+        if( $data['order_type'] && class_exists($subService) ){
+            $data['id'] = $uuid;
+            $subService::getInstance( $uuid )->save( $data );
+        }
         return $data;
     }
     
@@ -391,19 +748,237 @@ class OrderService {
      * 额外输入信息
      */
     public static function extraAfterUpdate(&$data, $uuid) {
+        Debug::debug(__CLASS__.__FUNCTION__,$data);        
         $info   = self::getInstance( $uuid )->get();
         //尝试流程节点的更新
         OrderFlowNodeService::lastNodeFinishAndNext($uuid);
-   
         //②写入订单子表
         $subService = self::getSubService( $info['order_type'] );
         if( $info['order_type'] && class_exists($subService) ){
             $subService::getInstance( $uuid )->update( $data );
         }
-        //判定订单完成，给下单人赠送积分的触发动作
-        ScoreLogic::score( $info['user_id'] );
+        //20211215订单取消，解绑座位
+        if($data['is_cancel']){
+            $passengers = OrderPassengerService::mainModel()->where('order_id',$uuid)->select();
+            foreach($passengers as &$v){
+                OrderPassengerService::getInstance($v['id'])->update(['is_ref'=>1]);
+            }
+        } else {
+            //判定订单完成，给下单人赠送积分的触发动作
+            ScoreLogic::score( $info['user_id'] );
+        }
+        
+        //20220318：TODO更优化的功能
+        //20220615：取消包可否？？？
+        if(isset($data['order_prize']) && $info['order_type'] == 'bao'){
+        //if(isset($data['order_prize'])){
+            FinanceStatementOrderService::updateOrderMoney($uuid, $data['order_prize']);
+        }
+        //20220630??
+        self::getInstance($uuid)->orderDataSync();
         return $data;
     }
+    
+    /**
+     * 20220619
+     * @param type $data
+     * @param type $uuid
+     * @return type
+     */
+    public static function ramAfterUpdate(&$data, $uuid) {
+        Debug::debug(__CLASS__.__FUNCTION__,$data);        
+        $info   = self::getInstance( $uuid )->get();
+        //TODO:去除事务校验再开启尝试流程节点的更新
+        // OrderFlowNodeService::lastNodeFinishAndNext($uuid);
+        //②写入订单子表
+        $subService = self::getSubService( $info['order_type'] );
+        if( $info['order_type'] && class_exists($subService) ){
+            $subService::getInstance( $uuid )->updateRam( $data );
+        }
+        //20211215订单取消，解绑座位
+        if(isset($data['is_cancel']) && $data['is_cancel']){
+            $passengers = OrderPassengerService::mainModel()->where('order_id',$uuid)->select();
+            foreach($passengers as &$v){
+                OrderPassengerService::getInstance($v['id'])->updateRam(['is_ref'=>1]);
+            }
+        }
+
+        //判定订单完成，给下单人赠送积分的触发动作
+        ScoreLogic::score( $info['user_id'] );
+        //20220622:更新订单的关联账单(含收付)
+        self::getInstance($uuid)->updateFinanceStatementRam();
+//        //20220622:增加同步订单数据
+//        self::getInstance($uuid)->orderDataSyncRam();
+
+        return $data;
+    }
+    
+    public static function ramAfterSave(&$data, $uuid) {
+        //OrderFlowNodeService::lastNodeFinishAndNext($uuid);
+        //②写入订单子表
+        $subService = self::getSubService( $data['order_type'] );
+        if( $data['order_type'] && class_exists($subService) ){
+            $data['id'] = $uuid;
+            $subService::getInstance( $uuid )->saveRam( $data );
+        }
+        /*
+        //20220622:更新订单的关联账单(含收付)
+        self::getInstance($uuid)->updateFinanceStatementRam();
+        //20220622:增加同步订单数据
+        self::getInstance($uuid)->orderDataSyncRam();
+         */
+
+        return $data;
+    }
+    /**
+     * 20220622优化性能
+     * @param type $data
+     * @param type $uuid
+     * @return type
+     * @throws Exception
+     */
+    public static function ramPreSave(&$data, $uuid) {
+        DataCheck::must($data, ['user_id']);
+        self::checkFinanceTimeLock(Arrays::value($data, 'plan_start_time'));
+        UserService::getInstance($data['user_id'])->checkUserPhone();
+        //20210812，测到金额bug注释:由::order方法控制
+        $goodsId     = Arrays::value($data, 'goods_id');
+        if($goodsId){
+            $goodsInfo   = GoodsService::getInstance( $goodsId )->get(MASTER_DATA);
+            $goodsName   = Arrays::value($goodsInfo,'goods_name');
+            if(Arrays::value($goodsInfo,'goods_status') != 'onsale'){
+                throw new Exception('商品'.$goodsName.'已经销售或未上架');
+            }
+            // 20220213可外部传，兼容支付账单体现订单概要信息
+            if(!isset($data['goods_name'] ) || !$data['goods_name']){
+                $data['goods_name']             = $goodsName;
+            }
+            $data['goods_table']            = Arrays::value($goodsInfo,'goods_table');
+            //兼容开发需求（多记录使用同商品下单）
+            $data['goods_table_id']         = Arrays::value($data,'goods_table_id') ? : Arrays::value($goodsInfo,'goods_table_id');
+            $data['seller_customer_id']     = Arrays::value($data,'seller_customer_id') ? : Arrays::value($goodsInfo,'customer_id');
+            $data['seller_user_id']         = Arrays::value($data,'seller_user_id') ? : Arrays::value($goodsInfo,'seller_user_id');
+            $data['order_type']             = Arrays::value($goodsInfo,'sale_type');
+            $data['shop_id']                = Arrays::value($goodsInfo,'shop_id');
+        }
+        //客户和用户进行绑定,方便下次下单
+        if(Arrays::value($data,'customer_id')&& Arrays::value($data,'user_id')){
+            CustomerUserService::bind($data['customer_id'], $data['user_id']);
+        }
+
+        return $data;
+    }
+    /**
+     * 20220622
+     * @throws Exception
+     */
+    public function ramPreDelete()
+    {
+        $info = $this->get();
+        $classStr = self::orderTypeClass($info['order_type']);
+        if(class_exists($classStr)){
+            //20220623:关联删除
+            $classStr::getInstance($this->uuid)->uniDelete();
+        }
+        
+        if($info['plan_start_time']){
+            self::checkFinanceTimeLock($info['plan_start_time']);
+        }
+        //对账单要先清
+        FinanceStatementService::clearOrderNoDealRam($this->uuid);
+        //才能清对账单明细
+        FinanceStatementOrderService::clearOrderNoDealRam($this->uuid);
+        
+        $con[] = ['order_id','=',$this->uuid];
+        $con[] = ['has_settle','=',1];
+        $res = FinanceStatementOrderService::mainModel()->master()->where($con)->count(1);
+        if($res){
+            throw new Exception('该订单有收付款账单，不可删除,订单号'.$this->uuid);
+        }
+        $fromTable = self::mainModel()->getTable();
+        $userAccountHasLog = UserAccountLogService::hasLog($fromTable, $this->uuid);
+        if($userAccountHasLog){
+            throw new Exception('该订单有用户账户记录'.$userAccountHasLog['id'].'，不可删除');
+        }
+        $conB[] = ['order_id','=',$this->uuid];
+        // 包车订单适用
+        $baoBusIds = OrderBaoBusService::mainModel()->master()->where($conB)->column('id');
+        if($baoBusIds){
+            //删除订单用车
+            foreach($baoBusIds as $baoBusId){
+                OrderBaoBusService::getInstance($baoBusId)->deleteRam();
+            }
+        }
+        //20220610：有后向订单的不可删；有前向订单不影响；
+        $conf[] = ['is_delete','=',0];
+        $conf[] = ['pre_order_id','=',$this->uuid];
+        $afterOrderId = self::mainModel()->where($conf)->value('id');
+        if($afterOrderId && !DbOperate::isGlobalDelete($fromTable, $afterOrderId)){
+            throw new Exception('该订单有后向订单'.$afterOrderId.'，不可删');
+        }
+        $conPin[] = ['order_id','=',$this->uuid];
+        // 拼团订单适用
+        $passengerIds = OrderPassengerService::mainModel()->master()->where($conPin)->column('id');
+        if($passengerIds){
+            //删除订单用车
+            foreach($passengerIds as $passengerId){
+                OrderPassengerService::getInstance($passengerId)->deleteRam();
+            }
+        }
+    }
+    
+    /**
+     * 删除价格数据
+     */
+    public function ramAfterDelete()
+    {
+        // 删流程
+        $con[] = ['order_id','=',$this->uuid];
+        $nodeLists = OrderService::getInstance($this->uuid)->objAttrsList('orderFlowNode');
+        foreach($nodeLists as $v){
+            OrderFlowNodeService::getInstance($v['id'])->deleteRam();
+        }
+
+        // 20220601拼团对应单置为未提交排班
+        $cone[] = ['bao_order_id','=',$this->uuid];
+        $circuitBusId = CircuitBusService::mainModel()->where($cone)->value('id');
+        if($circuitBusId){
+            CircuitBusService::getInstance($circuitBusId)->updateRam(['bao_order_id'=>'']);
+            $info = $this->get();
+            self::getInstance($info['pre_order_id'])->deleteRam();
+        }
+        // 删商品
+        $goodsIds = OrderGoodsService::ids($con);
+        foreach($goodsIds as $id){
+            //为了使用触发器20210802
+            OrderGoodsService::getInstance( $id )->deleteRam();
+        }
+    }
+    
+    /**
+     * 更新订单的财务账信息
+     */
+    public function updateFinanceStatementRam(){
+        $orderInfo = $this->get();
+        $classStr = self::orderTypeClass($orderInfo['order_type']);
+        //20220622：找个地方取订单金额：
+        if(class_exists($classStr)){
+            //20220615:计算订单价格
+            $orderPrize     = $classStr::getInstance($this->uuid)->calOrderPrize();
+            $sellerPrizeArr = $classStr::getInstance($this->uuid)->calSellerPrizeArr();
+        } else {
+            $orderPrize = GoodsPrizeKeyService::orderPrize($this->uuid);
+            $sellerPrizeArr = [];
+        }
+        //收客户钱
+        FinanceStatementOrderService::updateOrderMoneyRam($this->uuid, $orderPrize);
+        //付供应商钱
+        FinanceStatementOrderService::updateNeedOutcomePrizeRam($this->uuid, $sellerPrizeArr);
+        // 同步订单数据
+        self::getInstance($this->uuid)->orderDataSyncRam();
+        return true;
+    }
+    
     /**
      * 订单数据同步
      * 一般用于各种操作完成后
@@ -422,6 +997,8 @@ class OrderService {
         $updData    = array_merge($timeData, $prizeData, $moneyData, $lastNodeData);
         //订单是否完成
         $updData['is_complete'] = booleanToNumber( OrderFlowNodeService::orderComplete($orderId) );
+        //20220527:增加付款方式
+        $updData['finance_account_type'] = $this->getFinanceAccountType();
         Debug::debug('orderDataSync的data',$updData);
         //写入内存
         $this->setUuData($updData);
@@ -433,24 +1010,146 @@ class OrderService {
         if( $info['order_type'] && class_exists($subService) ){
             $subService::getInstance( $orderId )->update( $updData );
         }
-        //------------TODO是否可省略?②写入订单子表
-
-        //②写入订单子表
+        //20220413:更优化？更新拼车的付款状态
+        if($info['pay_prize'] >= $info['order_prize'] && $info['order_type'] == 'pin'){
+            $cone   = [];
+            $cone[] = ['order_id','=',$orderId];
+            OrderPassengerService::mainModel()->where($cone)->update(['is_pay'=>1]);
+        }
+        //20220516:包车订单，更新单趟次的费用信息；
+        if($info['order_type'] == 'bao'){
+            OrderBaoBusService::updateFinancePrize($this->uuid);
+        }
+        
         return $res;
+    }
+    
+    /**
+     * 20220620订单数据同步
+     * 一般用于各种操作完成后
+     */
+    public function orderDataSyncRam(){
+        $prizeData  = $this->orderPrize();
+        $moneyData  = FinanceStatementOrderService::orderMoneyData($this->uuid);
+        //只更新数据，不执行触发
+        //$updData    = array_merge($timeData, $prizeData, $moneyData, $lastNodeData);
+        $updData    = array_merge( $prizeData, $moneyData);
+        $updData['finance_account_type'] = $this->getFinanceAccountType();
+        //20220624死循环？？
+        $res = $this->doUpdateRam(array_merge($updData));
+        //$res = $this->updateRam(array_merge($updData));
+        $info = $this->get();
+        //TODO,其他bug
+        if($info['order_type'] == 'bao'){
+            OrderBaoBusService::updateFinancePrizeRam($this->uuid);
+        }
+
+        //20220621:递归更新前序订单
+        $preOrderId = $this->fPreOrderId();
+        if($preOrderId){
+            self::getInstance($preOrderId)->orderDataSyncRam();
+        }
+        return $res;
+    }
+    /**
+     * 20230324:不带数据权限（TODO更好？？）
+     * 暂时给后台的订单列表用
+     * @param type $con
+     * @param type $order
+     * @param type $perPage
+     * @param type $having
+     * @param type $field
+     * @param type $withSum
+     * @return type、
+     */
+    public static function paginateForAdmin($con = [], $order = '', $perPage = 10, $having = '', $field = "*", $withSum = false) {
+        //默认带数据权限
+        $conAll = array_merge($con, self::commCondition());
+        // 查询条件单拎；适用于后台管理（客户权限，业务员权限）
+        return self::paginateRaw($conAll, $order, $perPage, $having, $field, $withSum);
+    }
+    /**
+     * 优先级：是公司管理员，不加条件；
+     * 如果是客户；仅查询该客户名下订单
+     * TODO 如果都不是，仅查询该用户名下订单。
+     * TODO 20220407如何兼容现有后台用户？？？
+     * @return type
+     */
+    public static function extraDataAuthCond(){
+        //20230324:
+        $sessionUserInfo = session(SESSION_USER_INFO);
+        if($sessionUserInfo['admin_type'] == 'super'){
+            return [];
+        }
+        $authCond = [];
+        //过滤用户可查看的项目权限
+        $userId = session(SESSION_USER_ID);
+        $cond[] = ['user_id','=',$userId];
+        //20220809：增加管理员才能查看该客户下全部订单
+        $cond[] = ['is_manager','=',1];
+        $customerIds = CustomerUserService::mainModel()->where($cond)->column('customer_id');
+        // 20220525发现后台管理员查看数据会被过滤，增加!$sessionUserInfo['isCompanyManage']判断
+        if(!$sessionUserInfo['isCompanyManage']){
+            //20220422，TODO，如何处理？？会导致拼团查不到车票；但是客户端口又需要过滤数据
+            //$authCond[] = ['customer_id','in',$customerIds];
+            //20220430,临时使用，是否有更好的方法？？
+            if($customerIds){
+                $customerIds[]  = session(SESSION_USER_ID);
+                $authCond[]     = ['custUser','in',$customerIds];
+            } else {
+                // 20220809非管理员，只过滤自己下单的记录
+                $authCond[]     = ['user_id','in',session(SESSION_USER_ID)];
+            }
+        }
+        //TODO如果不是项目成员，只能查看自己提的需求
+        return $authCond;
     }
     
     public function extraPreDelete()
     {
         self::checkTransaction();
+        $info = $this->get();
+        if($info['plan_start_time']){
+            self::checkFinanceTimeLock($info['plan_start_time']);
+        }
+        //对账单要先清
+        FinanceStatementService::clearOrderNoDeal($this->uuid);
+        //才能清对账单明细
+        FinanceStatementOrderService::clearOrderNoDeal($this->uuid);
+        
         $con[] = ['order_id','=',$this->uuid];
         $res = FinanceStatementOrderService::mainModel()->master()->where($con)->count(1);
         if($res){
-            throw new Exception('该订单有收付款账单，不可删除');
+            throw new Exception('该订单有收付款账单，不可删除,订单号'.$this->uuid);
         }
         $fromTable = self::mainModel()->getTable();
         $userAccountHasLog = UserAccountLogService::hasLog($fromTable, $this->uuid);
         if($userAccountHasLog){
             throw new Exception('该订单有用户账户记录'.$userAccountHasLog['id'].'，不可删除');
+        }
+        // 包车订单适用
+        $baoBusIds = OrderBaoBusService::mainModel()->master()->where($con)->column('id');
+        if($baoBusIds){
+            //删除订单用车
+            foreach($baoBusIds as $baoBusId){
+                OrderBaoBusService::getInstance($baoBusId)->delete();
+            }
+        }
+        //20220610：有后向订单的不可删；有前向订单不影响；
+        $conf[] = ['is_delete','=',0];
+        $conf[] = ['pre_order_id','=',$this->uuid];
+        $hasAfterOrder = self::mainModel()->where($conf)->count();
+        if($hasAfterOrder){
+            throw new Exception('该订单有后向订单，不可删');
+        }
+        
+        // 拼团订单适用
+        $passengerIds = OrderPassengerService::mainModel()->master()->where($con)->column('id');
+        if($passengerIds){
+            //删除订单用车
+            foreach($passengerIds as $passengerId){
+                OrderPassengerService::getInstance($passengerId)->delete();
+            }
         }
     }
     
@@ -463,13 +1162,15 @@ class OrderService {
         // 删流程
         $con[] = ['order_id','=',$this->uuid];
         OrderFlowNodeService::mainModel()->where( $con )->delete();
+        // 20220601拼团对应单置为未提交排班
+        CircuitBusService::mainModel()->where('bao_order_id',$this->uuid)->update(['bao_order_id'=>'']);
         // 删商品
         $goodsIds = OrderGoodsService::ids($con);
         foreach($goodsIds as $id){
             //为了使用触发器20210802
             OrderGoodsService::getInstance( $id )->delete();
         }
-    }    
+    }
     /**
      * 订单取消
      */
@@ -483,20 +1184,7 @@ class OrderService {
         $res = $this->delete();
         return $res;
     }
-    /**
-     * 订单是否可删除
-     */
-    public function canDelete(){
-        $financeStatementOrderSql   = FinanceStatementOrderService::mainModel()->where('order_id',$this->uuid)->field('count(1)')->buildSql();
-        $financeStatementSql        = FinanceStatementService::mainModel()->where('order_id',$this->uuid)->field('count(1)')->buildSql();
-        $userAccountLogSql          = UserAccountLogService::mainModel()->where('from_table_id',$this->uuid)->field('count(1)')->buildSql();
-        
-        $sqlAll = 'select '.$financeStatementOrderSql.' as financeStatementOrder,'.$financeStatementSql.' as financeStatement,'.$userAccountLogSql.' as userAccountLog';
-        dump($financeStatementOrderSql);
-        dump($financeStatementSql);
-        dump($userAccountLogSql);
-        dump($sqlAll);
-    }
+
     /**
      * 订单软删
      * @return type
@@ -514,6 +1202,20 @@ class OrderService {
         if(method_exists( __CLASS__, 'extraAfterDelete')){
             $this->extraAfterDelete();      //注：id在preSaveData方法中生成
         }
+        return $res;
+    }
+    /**
+     * 20220609 真的删
+     */
+    public function destroy(){
+        $info = self::mainModel()->where('id',$this->uuid)->find();
+        if($info['company_id'] != session(SESSION_COMPANY_ID)){
+            throw new Exception('访问入口与当前订单不匹配');
+        }
+        if(!$info['is_delete']){
+            throw new Exception('订单未删不可销毁'.$this->uuid);
+        }
+        $res = self::mainModel()->where('id',$this->uuid)->delete();
         return $res;
     }
     /**
@@ -637,7 +1339,24 @@ class OrderService {
         }
         return 'processing';    //订单进行中
     }
-    
+    /**
+     * 0830：接单
+     */
+    public function accept(){
+        $data['has_accept']     = 1;
+        $data['accept_user_id'] = session(SESSION_USER_ID);
+        $data['accept_time']    = date('Y-m-d H:i:s');
+        return $this->update($data);
+    }
+    /**
+     * 取消接单
+     */
+    public function cancelAccept(){
+        $data['has_accept']     = 0;
+        $data['accept_user_id'] = '';
+        $data['accept_time']    = null;
+        return $this->update($data);
+    }
     /**
      *
      */
@@ -721,6 +1440,14 @@ class OrderService {
      */
     public function fPreOrderId() {
         return $this->getFFieldValue(__FUNCTION__);
+    }
+    /**
+     * 后续订单id
+     */
+    public function cAfterOrderId(){
+        $con[] = ['pre_order_id','=',$this->uuid];
+        $con[] = ['is_delete','=',0] ; 
+        return self::mainModel()->where($con)->value('id');
     }
 
     /**
@@ -827,7 +1554,11 @@ class OrderService {
     //是否取消
     public function fIsCancel() {
         return $this->getFFieldValue(__FUNCTION__);
-    }        
+    }
+    //是否结单
+    public function fIsComplete() {
+        return $this->getFFieldValue(__FUNCTION__);
+    }
     //由谁取消
     public function fCancelBy() {
         return $this->getFFieldValue(__FUNCTION__);

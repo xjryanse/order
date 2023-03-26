@@ -10,6 +10,7 @@ use xjryanse\finance\service\FinanceStatementService;
 use xjryanse\finance\service\FinanceStatementOrderService;
 use xjryanse\logic\Debug;
 use xjryanse\logic\Arrays;
+use xjryanse\logic\Strings;
 use think\Db;
 use Exception;
 /**
@@ -49,7 +50,7 @@ class OrderFlowNodeService {
         }
         $lists    = self::orderNodeList($orderId);
         $listsRev = array_reverse($lists);
-        
+        Debug::debug('getOrderTimeArr的$listsRev',$listsRev );
         $dataArr = array_fill_keys($timeKeys, null);
         foreach($listsRev as $info){
             foreach($timeKeys as $timeKey){
@@ -133,6 +134,11 @@ class OrderFlowNodeService {
         //设定订单预付金额
         OrderFlowNodePrizeTplService::setOrderPrePrize( $orderId, Arrays::value($data, 'node_key') );
         Debug::debug('正在保存订单节点信息',$data);        
+        //20211214;订单取消，清除未结账单
+        if( Strings::isEndWith($data['node_key'], 'Cancel')){
+            FinanceStatementService::clearOrderNoDeal($orderId);
+            FinanceStatementOrderService::clearOrderNoDeal($orderId);
+        }
         return $data;
     }
     
@@ -180,7 +186,8 @@ class OrderFlowNodeService {
     public static function extraAfterSave(&$data, $uuid) {
         //订单追加节点（内存中追加）
         $orderId = Arrays::value($data, 'order_id');
-        self::getInstance($uuid)->setUuData($data,true);
+        //20220617：已经封装，可以注释
+        //self::getInstance($uuid)->setUuData($data,true);
         OrderService::getInstance($orderId)->objAttrsPush('orderFlowNode',$data);
         //修改订单状态，更新节点等操作
         $data = self::afterOperate($data, $uuid);
@@ -221,10 +228,13 @@ class OrderFlowNodeService {
      */
     public static function addFinanceStatementOrder( $orderFlowNodeId )
     {
+        //20220617:尝试恢复从内存取数据
         $info           = self::getInstance( $orderFlowNodeId )->get(0);
+        //$info           = self::mainModel()->where('id',$orderFlowNodeId)->find();
         Debug::debug('addFinanceStatementOrder的$info',$info);
         $orderId        = Arrays::value($info, 'order_id');
         $orderInfo      = OrderService::getInstance( $orderId )->get(0);
+        Debug::debug('addFinanceStatementOrder的$orderInfo',$orderInfo);
         //无买家id，不生成账单（可能存在后台预下单，不可抛异常）
         if(!$orderInfo['user_id']){
             return false;
@@ -240,6 +250,7 @@ class OrderFlowNodeService {
                 continue;
             }
             $prizeKeyRole = GoodsPrizeKeyService::keyBelongRole( $prizeKey );
+            Debug::debug('addFinanceStatementOrder的$prizeKeyRole',$prizeKey.'_'.$prizeKeyRole);
             if($prizeKeyRole == 'rec_user' && !Arrays::value( $orderInfo , 'rec_user_id')){
                 continue;
             }
@@ -247,14 +258,27 @@ class OrderFlowNodeService {
                 continue;
             }
             $goodsPrizeInfo         = GoodsPrizeKeyService::getByPrizeKey( $prizeKey );  //价格key取归属
+            Debug::debug('addFinanceStatementOrder的$goodsPrizeInfo_'.$orderFlowNodeId, $goodsPrizeInfo);
             //订单id和价格key，取应付金额
             $needPayPrize = GoodsPrizeKeyService::orderPrizeKeyGetPrize($orderId, $prizeKey);
+            Debug::debug('addFinanceStatementOrder的$needPayPrize',$orderId.'_'.$prizeKey.'_'.$needPayPrize);
+            //有价格才添加20211215
+            if(!$needPayPrize){
+                return false;
+            }
             //写入账单
             $res = FinanceStatementOrderService::prizeKeySave($prizeKey, $orderId, $needPayPrize);
             //如果是充值到余额的，直接处理;,'sec_share'分账会存在订单未处理完，再考虑其他异步解决方案
             if( in_array(Arrays::value($goodsPrizeInfo,'to_money'),['money']) ){
                 $financeStatement = FinanceStatementService::statementGenerate( $res['id'] );
                 FinanceStatementService::getInstance($financeStatement['id'])->doDirect();
+            }
+            // 应付；退款20211213 for hengxing;
+            if( Arrays::value($goodsPrizeInfo,'change_type') == '2' && Arrays::value($goodsPrizeInfo,'type') == 'ref' ){
+                //生成对账单号；
+                $refStatementId = FinanceStatementOrderService::getStatementIdWithGenerate($res['id']);
+                //执行退款动作
+                FinanceStatementService::getInstance($refStatementId)->refWxPay();
             }
         }
         return $res;
@@ -302,11 +326,24 @@ class OrderFlowNodeService {
             $data['operate_customer_id']    = $orderInfo['customer_id'];
         } else {
             $data['operate_user_id'] = OrderService::getInstance( $orderId )->fBusierId();
+            $data['operate_customer_id']    = '';
         }
+        //20220618:兼容批量保存
+        $data['plan_finish_time'] = Arrays::value($data, 'plan_finish_time',null);
+        $data['finish_time'] = Arrays::value($data, 'finish_time',null);
+        $data['node_describe'] = Arrays::value($data, 'node_describe',null);
+        $data['is_jump'] = Arrays::value($data, 'is_jump',0);
+        $data['prize_key'] = Arrays::value($data, 'prize_key','');
         Debug::debug('OrderFlowNodeService::addFlow', $data);
         //保存
-        $res = self::save( $data );
-        return $res;
+        //$res = self::save( $data );
+        //20220618：先存到内存里
+        self::getInstance($data['id'])->setUuData($data,true);
+        OrderService::getInstance($orderId)->objAttrsPush('orderFlowNode',$data);
+        //20220618:当前订单节点增加账单
+        self::addFinanceStatementOrder($data['id']);
+
+        return $data;
     }
     
     /**
@@ -372,6 +409,9 @@ class OrderFlowNodeService {
     public static function nextCheckNodes($orderId){
         $saleTypeInst = self::orderSaleTypeInst($orderId);
         $nodeLists = $saleTypeInst->grandNodeList();
+        if(!$nodeLists){
+            throw new Exception('该订单无节点,$orderId'.$orderId);
+        }
         //$nodeLists = OrderFlowNodeTplService::grandNodeList($orderType,$companyId);        
         Debug::debug('祖宗节点key',$nodeLists);
         //订单类型获取订单的祖宗节点
@@ -414,8 +454,11 @@ class OrderFlowNodeService {
         if(!$nextCheckNodes){
             return false;
         }
+        // 20220618是否递归的最外层循环
+        $isMain = self::$lastNodeFinishCount == 0;
         // ②防止死循环
         self::$lastNodeFinishCount = self::$lastNodeFinishCount +1;
+        // 20220312;因为检票，从20调到200；TODO检票的更优方案呢？？
         $limitTimes = 20;
         if(self::$lastNodeFinishCount > $limitTimes){
             throw new Exception('lastNodeFinishAndNext 次数超限'.$limitTimes);
@@ -441,17 +484,19 @@ class OrderFlowNodeService {
                 self::orderNodeFinish($orderId, $nodeKey);
                 //20210921此处递归；最后一步bug：等待订单完成……
                 self::lastNodeFinishAndNext($orderId);
-                // 只要有一个达成，就return
-                return false;
+                break;
             }
         }
-        Debug::debug('self::$lastNodeFinishCount',self::$lastNodeFinishCount);
-        //条件未达成，且查询多于一次，更新订单的状态
-        if(self::$lastNodeFinishCount > 1){
+        //20220618:外层循环才执行节点数据入库，订单数据同步
+        if($isMain){
+            //20220618:清？
+            self::$lastNodeFinishCount = 0;
+            self::orderNodeRamToDb($orderId);
+            //20211214 ???? 更新is_complete状态
             OrderService::getInstance($orderId)->orderDataSync();
         }
     }
-    
+       
     /**
      * 更新订单末个节点流程
      * @param type $orderId
@@ -577,9 +622,14 @@ class OrderFlowNodeService {
     public function setFinish() {
         //完成的数据
         $data = $this->getFinishData();
-        //更新动作
-        $res = $this->update( $data);
-        return $res;
+        //20220618
+        $this->setUuData($data);
+        $info = $this->get();
+        OrderService::getInstance($info['order_id'])->objAttrsUpdate('orderFlowNode',$this->uuid, $data);
+        //更新动作 20220618注释
+        //$res = $this->update( $data);
+        //return $res;
+        return $this->uuData;
         //return self::mainModel()->where("id",$this->uuid)->update($data);
     }
     
@@ -599,7 +649,8 @@ class OrderFlowNodeService {
     protected function setClose(){
         $data['flow_status'] = XJRYANSE_OP_CLOSE;
         $this->setUuData($data);
-        $res = self::mainModel()->where("id",$this->uuid)->update($data);
+        //20220618注释
+        //$res = self::mainModel()->where("id",$this->uuid)->update($data);
         //处理关联的账单信息
         $info   = $this->get();
         $orderId = Arrays::value($info, 'order_id');
@@ -619,7 +670,7 @@ class OrderFlowNodeService {
             }
         }
 
-        return $res;
+        return $this->uuData;
         //有关联的删除触发动作
         //20210923会触发死循环，慎开
         //return $this->update( $data);
@@ -660,13 +711,33 @@ class OrderFlowNodeService {
         // 添加下一个节点
         self::addNextNode($orderId, $nodeKey );
     }
-    
+        
     /**
      * 获取订单的末个流程节点
      */
     public static function orderLastFlow($orderId) {
         $nodes = OrderService::getInstance($orderId)->objAttrsList('orderFlowNode');
         return array_pop($nodes);
+    }
+    /**
+     * 20220618：将内存中的流程节点入库(优化性能)
+     */
+    public static function orderNodeRamToDb($orderId){
+        self::checkTransaction();
+        $nodes = OrderService::getInstance($orderId)->objAttrsList('orderFlowNode');
+        //dump($nodes);
+        //20220618:字段数量不一样，组装，TODO更好方法？？
+        $dataArrKey = [];
+        foreach($nodes as $node){
+            $dataArrKey[count($node)][] = $node;
+        }
+        //先删；
+        $con[] = ['order_id','=',$orderId];
+        self::mainModel()->where($con)->delete();
+        //再加
+        foreach($dataArrKey as $dataArr){
+            self::saveAll($dataArr);
+        }
     }
     /**
      * 获取订单是否完成

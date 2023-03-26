@@ -18,6 +18,8 @@ class OrderGoodsService {
 
     protected static $mainModel;
     protected static $mainModelClass = '\\xjryanse\\order\\model\\OrderGoods';
+    //直接执行后续触发动作
+    protected static $directAfter = true;
 
     public static function orderGoodsInfo($orderId){
         $cond   = [];
@@ -31,7 +33,7 @@ class OrderGoodsService {
         foreach( $orderGoodsLists as &$v){
             $picId = $v['goods_pic'];
             $v['goodsPic'] = Cachex::funcGet('FileData_'.$picId, function() use ($picId){
-                return SystemFileService::mainModel()->where('id', $picId )->field('id,file_path,file_path as rawPath')->find()? : [];
+                return $picId && SystemFileService::mainModel()->where('id', $picId )->field('id,file_path,file_path as rawPath')->find()? : [];
             });
         }
         return $orderGoodsLists;
@@ -42,7 +44,8 @@ class OrderGoodsService {
      */
     public static function orderGoodsPrize($orderId){
         $con[] = ['order_id','=',$orderId];
-        return self::mainModel()->where($con)->value('sum( amount * unit_prize) as total');
+        $prize = self::mainModel()->where($con)->value('sum( amount * unit_prize) as total');
+        return round($prize,2);
     }
     /**
      * 钩子-保存前
@@ -51,10 +54,15 @@ class OrderGoodsService {
         self::checkTransaction();
         DataCheck::must($data, ['order_id','goods_id','amount']);
         $goodsId = Arrays::value($data, 'goods_id');
-        $stock   = StoreChangeDtlService::getStockByGoodsId($goodsId);
-        //库存校验
-        if($stock < Arrays::value($data, 'amount')){
-            throw new Exception('库存不足,当前'.$stock);
+        //商品信息
+        $goodsInfo = GoodsService::getInstance($goodsId)->get();
+        //20220316，普通商品才校验库存
+        if($goodsInfo['sale_type'] == 'normal'){
+            $stock   = StoreChangeDtlService::getStockByGoodsId($goodsId);
+            //库存校验
+            if($stock < Arrays::value($data, 'amount')){
+                throw new Exception($goodsId.'库存不足,当前'.$stock);
+            }
         }
     }
     /**
@@ -80,8 +88,17 @@ class OrderGoodsService {
      * 钩子-更新后
      */
     public static function extraAfterUpdate(&$data, $uuid) {
+        $info                   = self::getInstance($uuid)->get();
+        $con[] = ['order_id','=',$info['order_id']];
+        $count = self::count($con);
+        if( $count == 1){
+            $updData['amount'] = $info['amount'];
+        }
+        $updData['order_prize'] = self::orderGoodsPrize( $info['order_id'] );
+        // 订单更新
+        OrderService::getInstance($info['order_id'])->update( $updData );
+    }
 
-    }    
     /**
      * 钩子-删除前
      */
@@ -102,7 +119,27 @@ class OrderGoodsService {
     public function extraAfterDelete()
     {
 
-    }    
+    }
+    /**
+     * 20220622优化性能
+     * @param type $data
+     * @param type $uuid
+     * @throws Exception
+     */
+    public static function ramPreSave(&$data, $uuid) {
+        DataCheck::must($data, ['order_id','goods_id','amount']);
+        $goodsId = Arrays::value($data, 'goods_id');
+        //商品信息
+        $goodsInfo = GoodsService::getInstance($goodsId)->get();
+        //20220316，普通商品才校验库存
+        if($goodsInfo['sale_type'] == 'normal'){
+            $stock   = StoreChangeDtlService::getStockByGoodsId($goodsId);
+            //库存校验
+            if($stock < Arrays::value($data, 'amount')){
+                throw new Exception($goodsId.'库存不足,当前'.$stock);
+            }
+        }
+    }
     
     /**
      * 将订单列表同步写入store数据库

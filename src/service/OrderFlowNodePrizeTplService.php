@@ -14,6 +14,8 @@ class OrderFlowNodePrizeTplService implements MainModelInterface
 {
     use \xjryanse\traits\InstTrait;
     use \xjryanse\traits\MainModelTrait;
+    // 静态模型：配置式数据表
+    use \xjryanse\traits\StaticModelTrait;
 
     protected static $mainModel;
     protected static $mainModelClass    = '\\xjryanse\\order\\model\\OrderFlowNodePrizeTpl';
@@ -23,12 +25,20 @@ class OrderFlowNodePrizeTplService implements MainModelInterface
      */
     public static function getPrizeKeys( $saleType ,$nodeKey )
     {
+        //20220617：使用静态优化性能
+        $con[] = ['sale_type','=',$saleType];
+        $con[] = ['node_key','=',$nodeKey ];
+        $info  = self::staticConFind($con);
+        return $info ? explode(',', $info['prize_keys']) : [] ;
+        /*
+         * 20220617注释
         return Cachex::funcGet( __CLASS__.'_'.__METHOD__.$saleType.$nodeKey, function() use ($saleType, $nodeKey){
             $con[] = ['sale_type','=',$saleType];
             $con[] = ['node_key','=',$nodeKey ];
             $prizeKeys = self::mainModel()->where( $con )->value('prize_keys');
             return $prizeKeys ? explode(',', $prizeKeys): [] ;
         });
+         */
     }
     
     /**

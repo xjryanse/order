@@ -6,6 +6,8 @@ namespace xjryanse\order\model;
  */
 class Order extends Base
 {
+    public static $picFields = ['buyer_sign','seller_sign'];
+    
     //成交时间
     public function setOrderFinishTimeAttr($value)
     {
@@ -39,5 +41,41 @@ class Order extends Base
     public function setOrderReceiveTimeAttr($value)
     {
         return self::setTimeVal($value);
+    }    
+    /**
+     * 用户签名
+     * @param type $value
+     * @return type
+     */
+    public function getBuyerSignAttr($value) {
+        return self::getImgVal($value);
     }
+
+    /**
+     * 用户签名，图片带id只取id
+     * @param type $value
+     * @throws \Exception
+     */
+    public function setBuyerSignAttr($value) {
+        return self::setImgVal($value);
+    }
+    
+    /**
+     * 用户签名
+     * @param type $value
+     * @return type
+     */
+    public function getSellerSignAttr($value) {
+        return self::getImgVal($value);
+    }
+
+    /**
+     * 用户签名，图片带id只取id
+     * @param type $value
+     * @throws \Exception
+     */
+    public function setSellerSignAttr($value) {
+        return self::setImgVal($value);
+    }
+    
 }
