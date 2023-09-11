@@ -7,6 +7,77 @@ use think\Db;
  */
 class OrderPassenger extends Base
 {
+    use \xjryanse\traits\ModelUniTrait;
+    // 20230516:数据表关联字段
+    public static $uniFields = [
+        [
+            'field'     =>'circuit_bus_id',
+            'uni_name'  =>'circuit_bus',
+            'uni_field' =>'id',
+            'in_list'   => false,
+            'in_statics'=> true,
+            'del_check' => true,
+            'del_msg'   => '已有{$count}张订票记录'
+        ],
+        [
+            'field'     =>'order_id',
+            'uni_name'  =>'order',
+            'uni_field' =>'id',
+            'in_list'   => false,
+            'in_statics'=> true,
+            'del_check' => false,
+        ],
+        [
+            'field'     =>'circuit_id',
+            'uni_name'  =>'circuit',
+            'uni_field' =>'id',
+            'in_list'   => false,
+            'in_statics'=> false,
+            'in_exist'  => true,
+            'del_check' => false,
+        ],
+        [
+            'field'     =>'from_station_id',
+            'uni_name'  =>'station',
+            'uni_field' =>'id',
+            'in_list'   => false,
+            'in_statics'=> true,
+            'in_exist'  => false,
+            'del_check' => true,
+            'del_msg'   => '已有{$count}张出发站订票记录',
+            'property'  =>'fromOrderPassenger'
+        ],
+        [
+            'field'     =>'to_station_id',
+            'uni_name'  =>'station',
+            'uni_field' =>'id',
+            'in_list'   => false,
+            'in_statics'=> true,
+            'in_exist'  => false,
+            'del_check' => true,
+            'del_msg'   => '已有{$count}张到达站订票记录',
+            'property'  =>'toOrderPassenger'
+        ],
+        [
+            'field'     =>'passenger_id',
+            'uni_name'  =>'user_passenger',
+            'uni_field' =>'id',
+            'in_list'   => false,
+            'in_statics'=> true,
+            'in_exist'  => false,
+            'del_check' => false,
+        ],
+        [
+            'field'     =>'user_id',
+            'uni_name'  =>'user',
+            'uni_field' =>'id',
+            'in_list'   => false,
+            'in_statics'=> false,
+            'in_exist'  => true,
+            'del_check' => true,
+        ],
+    ];
+    
     /**
      * 多班合并排车辆
      * @param type $circuitBusIds   多线路id

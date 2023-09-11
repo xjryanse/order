@@ -25,6 +25,7 @@ class SaleTypeLogic
     }
     /**
      * 销售类型取流程模板
+     * 返回 OrderFlowNodeTplService 表的 数组记录
      * @return type
      */
     public function getflowNodeTplLists(){

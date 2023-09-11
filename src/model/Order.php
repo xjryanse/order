@@ -6,7 +6,30 @@ namespace xjryanse\order\model;
  */
 class Order extends Base
 {
+    use \xjryanse\traits\ModelUniTrait;
+    
     public static $picFields = ['buyer_sign','seller_sign'];
+    // 20230516:数据表关联字段
+    public static $uniFields = [
+        [
+            'field'     =>'user_id',
+            'uni_name'  =>'user',
+            'uni_field' =>'id',
+            'in_list'   => false,
+            'in_statics'=> false,
+            'in_exist'  => true,
+            'del_check' => true,
+        ],
+        [
+            'field'     =>'customer_id',
+            'uni_name'  =>'customer',
+            'uni_field' =>'id',
+            'in_list'   => false,
+            'in_statics'=> true,
+            'in_exist'  => true,
+            'del_check' => true,
+        ],
+    ];
     
     //成交时间
     public function setOrderFinishTimeAttr($value)

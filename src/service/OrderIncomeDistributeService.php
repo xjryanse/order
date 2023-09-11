@@ -13,49 +13,48 @@ class OrderIncomeDistributeService {
 
     use \xjryanse\traits\InstTrait;
     use \xjryanse\traits\MainModelTrait;
+    use \xjryanse\traits\MainModelQueryTrait;
 
     protected static $mainModel;
     protected static $mainModelClass = '\\xjryanse\\order\\model\\OrderIncomeDistribute';
 
-    public static function save(  $data )
-    {
-        if(isset($data['order_id'])){
-            $data['order_type'] = OrderService::getInstance( $data['order_id'] )->fOrderType();
+    public static function save($data) {
+        if (isset($data['order_id'])) {
+            $data['order_type'] = OrderService::getInstance($data['order_id'])->fOrderType();
         }
-        
+
         $res = self::commSave($data);
-        if(isset($data['distri_status']) && $data['distri_status'] == XJRYANSE_OP_FINISH){
+        if (isset($data['distri_status']) && $data['distri_status'] == XJRYANSE_OP_FINISH) {
             $res = FinanceOutcomeService::save($data);
-            $data['money'] = isset($data['distri_prize']) ? $data['distri_prize'] : 0 ; 
+            $data['money'] = isset($data['distri_prize']) ? $data['distri_prize'] : 0;
             $resp = FinanceOutcomeService::save($data);
 
             $data['outcome_id'] = $resp['id'];
             //更新付款单
-            OrderService::getInstance( $res['id'])->update($data);
+            OrderService::getInstance($res['id'])->update($data);
         }
 
         return $res;
     }
-    
-    public function update( $data )
-    {        
+
+    public function update($data) {
         $info = $this->get(0);
-        if(isset($data['distri_status']) && $data['distri_status'] == XJRYANSE_OP_FINISH){
-            $financeData = array_merge($info->toArray(),$data);
+        if (isset($data['distri_status']) && $data['distri_status'] == XJRYANSE_OP_FINISH) {
+            $financeData = array_merge($info->toArray(), $data);
             unset($financeData['id']);
-            if(!$info['outcome_id']){
-                $resp = FinanceOutcomeService::save( $financeData );
+            if (!$info['outcome_id']) {
+                $resp = FinanceOutcomeService::save($financeData);
                 $data['outcome_id'] = $resp['id'];
             } else {
                 //付款单
-                $resp = FinanceOutcomeService::getInstance($data['outcome_id'])->update( $financeData );
+                $resp = FinanceOutcomeService::getInstance($data['outcome_id'])->update($financeData);
             }
         }
 
         $res = $this->commUpdate($data);
         return $res;
     }
-    
+
     /**
      * 新的分钱逻辑
      * @param type $orderId
@@ -80,12 +79,12 @@ class OrderIncomeDistributeService {
             throw new Exception('超出订单已付金额，不可分润');
         }
         //拼接数据
-        $data['order_id']       = $orderId;
-        $data['order_type']     = $info['order_type'];
-        $data['distri_key']     = $distriKey;
-        $data['distri_prize']   = $distriPrize;
-        $data['distri_prize']   = $distriPrize;
-        $data['distri_status']  = XJRYANSE_OP_TODO;  //待分派
+        $data['order_id'] = $orderId;
+        $data['order_type'] = $info['order_type'];
+        $data['distri_key'] = $distriKey;
+        $data['distri_prize'] = $distriPrize;
+        $data['distri_prize'] = $distriPrize;
+        $data['distri_status'] = XJRYANSE_OP_TODO;  //待分派
         //写入表
         $res = self::save($data);
         //更新钱

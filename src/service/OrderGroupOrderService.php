@@ -9,16 +9,17 @@ class OrderGroupOrderService {
 
     use \xjryanse\traits\InstTrait;
     use \xjryanse\traits\MainModelTrait;
-    use \xjryanse\traits\SubServiceTrait;    
+    use \xjryanse\traits\MainModelQueryTrait;
+    use \xjryanse\traits\SubServiceTrait;
 
     protected static $mainModel;
     protected static $mainModelClass = '\\xjryanse\\order\\model\\OrderGroupOrder';
 
-    public static function groupOrderIds( $groupId ){
-        $con[] = [ 'group_id','=',$groupId ];
-        return self::column( 'order_id', $con );
+    public static function groupOrderIds($groupId) {
+        $con[] = ['group_id', '=', $groupId];
+        return self::column('order_id', $con);
     }
-    
+
     /**
      *
      */

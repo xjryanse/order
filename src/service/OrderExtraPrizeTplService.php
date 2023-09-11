@@ -5,6 +5,7 @@ namespace xjryanse\order\service;
 use xjryanse\order\service\OrderService;
 use xjryanse\goods\service\GoodsPrizeKeyService;
 use xjryanse\finance\service\FinanceStatementOrderService;
+
 /**
  * 订单加收费用模板
  */
@@ -12,35 +13,38 @@ class OrderExtraPrizeTplService {
 
     use \xjryanse\traits\InstTrait;
     use \xjryanse\traits\MainModelTrait;
-    use \xjryanse\traits\SubServiceTrait;    
+    use \xjryanse\traits\MainModelQueryTrait;
+    use \xjryanse\traits\SubServiceTrait;
 
     protected static $mainModel;
     protected static $mainModelClass = '\\xjryanse\\order\\model\\OrderExtraPrizeTpl';
+
     /**
      * 添加到账单
      * @param type $orderId
      */
-    public function addStatement($orderId){
+    public function addStatement($orderId) {
         $tplInfo = $this->get();
         $orderInfo = OrderService::getInstance($orderId)->get();
-        if($tplInfo['order_type'] != $orderInfo['order_type']) {
-            throw new exception('订单类型不匹配，tpl:'.$tplInfo['order_type'].'-order:'.$orderInfo['order_type']);
+        if ($tplInfo['order_type'] != $orderInfo['order_type']) {
+            throw new exception('订单类型不匹配，tpl:' . $tplInfo['order_type'] . '-order:' . $orderInfo['order_type']);
         }
         // 价格key
-        $prizeKey               = $tplInfo['prize_key'];
+        $prizeKey = $tplInfo['prize_key'];
         // 价格
-        $prize                  = $this->getPrize($orderId);
+        $prize = $this->getPrize($orderId);
         // 保存
         return FinanceStatementOrderService::prizeKeySave($prizeKey, $orderId, $prize);
     }
+
     /**
      * 订单id取价格
      * @param type $orderId
      */
-    public function getPrize($orderId){
+    public function getPrize($orderId) {
         return 5;
     }
-    
+
     /**
      *
      */
@@ -54,24 +58,31 @@ class OrderExtraPrizeTplService {
     public function fCompanyId() {
         return $this->getFFieldValue(__FUNCTION__);
     }
+
     public function fOrderType() {
         return $this->getFFieldValue(__FUNCTION__);
     }
+
     public function fPrizeKey() {
         return $this->getFFieldValue(__FUNCTION__);
     }
+
     public function fPrizeName() {
         return $this->getFFieldValue(__FUNCTION__);
     }
+
     public function fDescribe() {
         return $this->getFFieldValue(__FUNCTION__);
     }
+
     public function fBelongRole() {
         return $this->getFFieldValue(__FUNCTION__);
     }
+
     public function fPrize() {
         return $this->getFFieldValue(__FUNCTION__);
     }
+
     /**
      * 排序
      */

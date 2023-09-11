@@ -9,7 +9,8 @@ class OrderGroupService {
 
     use \xjryanse\traits\InstTrait;
     use \xjryanse\traits\MainModelTrait;
-    use \xjryanse\traits\SubServiceTrait;    
+    use \xjryanse\traits\MainModelQueryTrait;
+    use \xjryanse\traits\SubServiceTrait;
 
     protected static $mainModel;
     protected static $mainModelClass = '\\xjryanse\\order\\model\\OrderGroup';
@@ -20,28 +21,27 @@ class OrderGroupService {
      * @param type $orderIds
      * @param array $data
      */
-    public static function addWithSub( $groupType, $orderIds, $data=[] )
-    {
+    public static function addWithSub($groupType, $orderIds, $data = []) {
         self::checkTransaction();
         $data['group_type'] = $groupType;   //按供应商，按客户
         $res = self::save($data);
-        foreach( $orderIds as $orderId ){
-            $tmpData                = [];
-            $tmpData['group_id']    = $res['id'];
-            $tmpData['order_id']    = $orderId;
-            OrderGroupOrderService::save( $tmpData );
+        foreach ($orderIds as $orderId) {
+            $tmpData = [];
+            $tmpData['group_id'] = $res['id'];
+            $tmpData['order_id'] = $orderId;
+            OrderGroupOrderService::save($tmpData);
         }
         return $res;
     }
-    
-    public function extraAfterDelete(){
-        $con[] = [ 'group_id','=',$this->uuid ];
-        if(!$this->get(0)){
+
+    public function extraAfterDelete() {
+        $con[] = ['group_id', '=', $this->uuid];
+        if (!$this->get(0)) {
             //删除用户的关联
-            OrderGroupOrderService::mainModel()->where( $con )->delete();
+            OrderGroupOrderService::mainModel()->where($con)->delete();
         }
-    }    
-    
+    }
+
     /**
      *
      */

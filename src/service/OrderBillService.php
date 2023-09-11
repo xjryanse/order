@@ -9,32 +9,34 @@ class OrderBillService {
 
     use \xjryanse\traits\InstTrait;
     use \xjryanse\traits\MainModelTrait;
+    use \xjryanse\traits\MainModelQueryTrait;
     use \xjryanse\traits\SubServiceTrait;
 
     protected static $mainModel;
     protected static $mainModelClass = '\\xjryanse\\order\\model\\OrderBill';
-    
+
     /**
      * 
      * @param type $data
      * @param type $uuid
      */
     public static function ramPreSave(&$data, $uuid) {
-        if(isset($data['orderIdArr'])){
+        if (isset($data['orderIdArr'])) {
             $orderIdArr = $data['orderIdArr'];
-            foreach($orderIdArr as &$v){
+            foreach ($orderIdArr as &$v) {
                 $v['bill_id'] = $uuid;
             }
             OrderBillOrderService::saveAllRam($orderIdArr);
         }
     }
-    
+
     public function ramPreDelete() {
-        $ids = OrderBillOrderService::mainModel()->where('bill_id',$this->uuid)->column('id');
-        foreach($ids as $id){
+        $ids = OrderBillOrderService::mainModel()->where('bill_id', $this->uuid)->column('id');
+        foreach ($ids as $id) {
             OrderBillOrderService::getInstance($id)->deleteRam();
         }
     }
+
     /**
      *
      */

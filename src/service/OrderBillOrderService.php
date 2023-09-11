@@ -4,6 +4,7 @@ namespace xjryanse\order\service;
 
 use app\order\service\OrderBaoBusService;
 use xjryanse\logic\Arrays;
+
 /**
  * 对账单
  */
@@ -11,27 +12,30 @@ class OrderBillOrderService {
 
     use \xjryanse\traits\InstTrait;
     use \xjryanse\traits\MainModelTrait;
+    use \xjryanse\traits\MainModelQueryTrait;
     use \xjryanse\traits\SubServiceTrait;
 
     protected static $mainModel;
     protected static $mainModelClass = '\\xjryanse\\order\\model\\OrderBillOrder';
+
     /**
      * 保存账单订单
      * @param type $data
      * @param type $uuid
      */
     public static function ramPreSave(&$data, $uuid) {
-        if(Arrays::value($data, 'sub_order_id')){
-            OrderBaoBusService::getInstance($data['sub_order_id'])->doUpdateRam(['has_bill'=>1]);            
+        if (Arrays::value($data, 'sub_order_id')) {
+            OrderBaoBusService::getInstance($data['sub_order_id'])->doUpdateRam(['has_bill' => 1]);
         }
     }
-    
+
     public function ramPreDelete() {
         $info = $this->get();
-        if($info['sub_order_id']){
-            OrderBaoBusService::getInstance($info['sub_order_id'])->doUpdateRam(['has_bill'=>0]);            
+        if ($info['sub_order_id']) {
+            OrderBaoBusService::getInstance($info['sub_order_id'])->doUpdateRam(['has_bill' => 0]);
         }
     }
+
     /**
      *
      */
