@@ -5,7 +5,7 @@ namespace xjryanse\order\service;
 use app\station\service\StationService;
 use app\circuit\service\CircuitBusService;
 use app\circuit\service\CircuitBusBaoOrderService;
-use app\tour\service\TourPassengerService;
+use xjryanse\tour\service\TourPassengerService;
 use xjryanse\customer\service\CustomerUserService;
 use xjryanse\goods\service\GoodsService;
 use xjryanse\goods\service\GoodsPrizeService;
@@ -42,6 +42,10 @@ class OrderService {
 
     use \xjryanse\traits\InstTrait;
     use \xjryanse\traits\MainModelTrait;
+    use \xjryanse\traits\MainModelRamTrait;
+    use \xjryanse\traits\MainModelCacheTrait;
+    use \xjryanse\traits\MainModelCheckTrait;
+    use \xjryanse\traits\MainModelGroupTrait;
     use \xjryanse\traits\MainModelQueryTrait;
     use \xjryanse\traits\SubServiceTrait;
     use \xjryanse\traits\ObjectAttrTrait;
@@ -82,7 +86,7 @@ class OrderService {
             'master' => true
         ],
         'tourPassengers' => [
-            'class' => '\\app\\tour\\service\\TourPassengerService',
+            'class' => '\\xjryanse\\tour\\service\\TourPassengerService',
             'keyField' => 'order_id',
             'master' => true
         ],
@@ -100,21 +104,15 @@ class OrderService {
     // 20230710：开启方法调用统计
     protected static $callStatics = true;
 
-    
     // 分开比较好管理
     use \xjryanse\order\service\index\PaginateTraits;
     use \xjryanse\order\service\index\FieldTraits;
     use \xjryanse\order\service\index\TriggerTraits;
+    use \xjryanse\order\service\index\ListTraits;
+    use \xjryanse\order\service\index\FindTraits;
     
-    
-    /**
-     * 后续订单id
-     */
-    public function cAfterOrderId() {
-        $con[] = ['pre_order_id', '=', $this->uuid];
-        $con[] = ['is_delete', '=', 0];
-        return self::mainModel()->where($con)->value('id');
-    }
+    use \xjryanse\order\service\index\ApprovalTraits;
+    use \xjryanse\approval\traits\ApprovalOutTrait;
     /**
      * 20220918客户访问权限校验；增加安全性
      */
@@ -192,7 +190,6 @@ class OrderService {
         $money = array_sum(array_column($filterArr, 'need_pay_prize'));
         return $money;
     }
-
 
     /**
      * TODo通用的下订单方法
@@ -334,6 +331,8 @@ class OrderService {
         // 配送费:配送费专用key
         $data['deliver_prize'] = GoodsPrizeKeyService::orderPrizeKeyGetPrize($orderId, 'DeliverPrize');
         Debug::debug(__CLASS__ . '_' . __FUNCTION__ . '$data', $data);
+        // Debug::dump($classStr);
+        // Debug::dump($data);
         return $data;
     }
 
@@ -422,10 +421,14 @@ class OrderService {
         return Arrays::keyReplace($timeArr, $keys);
     }
 
+    /**
+     * 20240402:太复杂，准备废弃
+     * @return bool
+     */
     public function info() {
         $orderInfo = $this->commInfo(0);
         // 20230812:反馈新中单不显示
-        if(!$orderInfo){
+        if (!$orderInfo) {
             return [];
         }
         if ($orderInfo['is_delete']) {
@@ -488,6 +491,11 @@ class OrderService {
         return false;
     }
 
+    /**
+     * 
+     * @param type $ids
+     * @return type
+     */
     public static function extraDetails($ids) {
         return self::commExtraDetails($ids, function ($lists) use ($ids) {
                     // 转化成数组
@@ -619,15 +627,17 @@ class OrderService {
     public function updateFinanceStatementRam() {
         $orderInfo = $this->get();
         $classStr = self::orderTypeClass($orderInfo['order_type']);
+
         //20220622：找个地方取订单金额：
         if (class_exists($classStr)) {
-            //20220615:计算订单价格
+            //20220615:计算订单价格 
             $orderPrize = $classStr::getInstance($this->uuid)->calOrderPrize();
             $sellerPrizeArr = $classStr::getInstance($this->uuid)->calSellerPrizeArr();
         } else {
             $orderPrize = GoodsPrizeKeyService::orderPrize($this->uuid);
             $sellerPrizeArr = [];
         }
+
         //收客户钱
         FinanceStatementOrderService::updateOrderMoneyRam($this->uuid, $orderPrize);
         //付供应商钱
@@ -676,7 +686,8 @@ class OrderService {
         }
         //20220516:包车订单，更新单趟次的费用信息；
         if ($info['order_type'] == 'bao') {
-            OrderBaoBusService::updateFinancePrize($this->uuid);
+            // 20240120?qu
+            // OrderBaoBusService::updateFinancePrize($this->uuid);
         }
 
         return $res;
@@ -709,7 +720,6 @@ class OrderService {
         }
         return $res;
     }
-
 
     /**
      * 优先级：是公司管理员，不加条件；
@@ -747,8 +757,6 @@ class OrderService {
         //TODO如果不是项目成员，只能查看自己提的需求
         return $authCond;
     }
-
-
 
     /**
      * 订单取消
@@ -999,18 +1007,17 @@ class OrderService {
         return self::extraDetails($ids);
     }
 
-    
     /*
      * 20230809:获取批量账单id，用于合并支付
      */
-    public static function statementGenerate($ids){
+    public static function statementGenerate($ids) {
         $method = __METHOD__;
-        return Functions::anti($method, $ids, function($ids) {
-            $con[]              = ['order_id','in',$ids];
-            $con[]              = ['has_settle','=',0];
-            $statementOrderIds  = FinanceStatementOrderService::mainModel()->where($con)->column('id');
-            $statementId        = FinanceStatementOrderService::getStatementIdWithGenerate($statementOrderIds, true);
-            return FinanceStatementService::getInstance( $statementId )->get(MASTER_DATA);
-        });
+        return Functions::anti($method, $ids, function ($ids) {
+                    $con[] = ['order_id', 'in', $ids];
+                    $con[] = ['has_settle', '=', 0];
+                    $statementOrderIds = FinanceStatementOrderService::mainModel()->where($con)->column('id');
+                    $statementId = FinanceStatementOrderService::getStatementIdWithGenerate($statementOrderIds, true);
+                    return FinanceStatementService::getInstance($statementId)->get(MASTER_DATA);
+                });
     }
 }

@@ -1,46 +1,11 @@
 <?php
 
-namespace xjryanse\order\service;
+namespace xjryanse\order\service\flowNode;
 
 /**
- * 订单分组
+ * 分页复用列表
  */
-class OrderBillService {
-
-    use \xjryanse\traits\InstTrait;
-    use \xjryanse\traits\MainModelTrait;
-    use \xjryanse\traits\MainModelRamTrait;
-    use \xjryanse\traits\MainModelCacheTrait;
-    use \xjryanse\traits\MainModelCheckTrait;
-    use \xjryanse\traits\MainModelGroupTrait;
-    use \xjryanse\traits\MainModelQueryTrait;
-
-    use \xjryanse\traits\SubServiceTrait;
-
-    protected static $mainModel;
-    protected static $mainModelClass = '\\xjryanse\\order\\model\\OrderBill';
-
-    /**
-     * 
-     * @param type $data
-     * @param type $uuid
-     */
-    public static function ramPreSave(&$data, $uuid) {
-        if (isset($data['orderIdArr'])) {
-            $orderIdArr = $data['orderIdArr'];
-            foreach ($orderIdArr as &$v) {
-                $v['bill_id'] = $uuid;
-            }
-            OrderBillOrderService::saveAllRam($orderIdArr);
-        }
-    }
-
-    public function ramPreDelete() {
-        $ids = OrderBillOrderService::mainModel()->where('bill_id', $this->uuid)->column('id');
-        foreach ($ids as $id) {
-            OrderBillOrderService::getInstance($id)->deleteRam();
-        }
-    }
+trait FieldTraits{
 
     /**
      *
@@ -57,9 +22,58 @@ class OrderBillService {
     }
 
     /**
-     * 公司id
+     *
      */
     public function fCompanyId() {
+        return $this->getFFieldValue(__FUNCTION__);
+    }
+
+    /**
+     * 订单id
+     */
+    public function fOrderId() {
+        return $this->getFFieldValue(__FUNCTION__);
+    }
+
+    /**
+     * 节点key
+     */
+    public function fNodeKey() {
+        return $this->getFFieldValue(__FUNCTION__);
+    }
+
+    /**
+     * 节点名称
+     */
+    public function fNodeName() {
+        return $this->getFFieldValue(__FUNCTION__);
+    }
+
+    /**
+     * 流程状态：todo待处理；doing进行中；finish已完成
+     */
+    public function fFlowStatus() {
+        return $this->getFFieldValue(__FUNCTION__);
+    }
+
+    /**
+     * 完成时间
+     */
+    public function fFinishTime() {
+        return $this->getFFieldValue(__FUNCTION__);
+    }
+
+    /**
+     * 等待操作用户角色
+     */
+    public function fOperateRole() {
+        return $this->getFFieldValue(__FUNCTION__);
+    }
+
+    /**
+     * 等待操作用户角色
+     */
+    public function fOperateUserId() {
         return $this->getFFieldValue(__FUNCTION__);
     }
 

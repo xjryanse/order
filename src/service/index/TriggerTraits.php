@@ -12,9 +12,12 @@ use xjryanse\order\service\OrderPassengerService;
 use xjryanse\order\service\OrderGoodsService;
 use xjryanse\order\service\OrderFlowNodeService;
 use xjryanse\order\service\OrderChangeLogService;
+use xjryanse\system\service\SystemCompanyService;
+use xjryanse\system\service\SystemCompanyDeptService;
 use xjryanse\user\service\UserService;
 use xjryanse\user\service\UserAccountLogService;
 use xjryanse\user\logic\ScoreLogic;
+use xjryanse\logic\Strings;
 use xjryanse\logic\DataCheck;
 use xjryanse\logic\DbOperate;
 use xjryanse\logic\Arrays;
@@ -28,8 +31,12 @@ use app\order\service\OrderBaoBusService;
 /**
  * 分页复用列表
  */
-trait TriggerTraits{
+trait TriggerTraits {
 
+    /**
+     * 
+     * @throws Exception
+     */
     public function extraPreDelete() {
         self::checkTransaction();
         $info = $this->get();
@@ -96,9 +103,8 @@ trait TriggerTraits{
             OrderGoodsService::getInstance($id)->delete();
         }
     }
-    
-    
-        /**
+
+    /**
      * 额外输入信息
      */
     public static function extraAfterSave(&$data, $uuid) {
@@ -151,14 +157,25 @@ trait TriggerTraits{
 
         //20220318：TODO更优化的功能
         //20220615：取消包可否？？？
-        if (isset($data['order_prize']) && $info['order_type'] == 'bao') {
-            FinanceStatementOrderService::updateOrderMoney($uuid, $data['order_prize']);
-        }
+        // 20240215:明细编辑后，再点击包车下单，会出现账单明细被清理的bug
+        // if (isset($data['order_prize']) && $info['order_type'] == 'bao') {
+        //     FinanceStatementOrderService::updateOrderMoney($uuid, $data['order_prize']);
+        // }
         //20220630??
         self::getInstance($uuid)->orderDataSync();
         return $data;
     }
 
+    /**
+     * 
+     * @param type $data
+     * @param type $uuid
+     * @return type
+     */
+    public static function ramPreUpdate(&$data, $uuid) {
+        self::queryCountCheck(__METHOD__);
+    }    
+    
     /**
      * 20220619
      * @param type $data
@@ -193,27 +210,40 @@ trait TriggerTraits{
         //判定订单完成，给下单人赠送积分的触发动作
         ScoreLogic::score($info['user_id']);
         //20220622:更新订单的关联账单(含收付)
+        // 20240121：发现捣乱
         self::getInstance($uuid)->updateFinanceStatementRam();
 //        //20220622:增加同步订单数据
 //        self::getInstance($uuid)->orderDataSyncRam();
 
         return $data;
     }
-
+    
+    /**
+     * 
+     * @param type $data
+     * @param type $uuid
+     * @return type
+     */
     public static function ramAfterSave(&$data, $uuid) {
+        $orderType = Arrays::value($data, 'order_type');
+        
         //OrderFlowNodeService::lastNodeFinishAndNext($uuid);
-        //②写入订单子表
-        $subService = self::getSubService($data['order_type']);
-        if ($data['order_type'] && class_exists($subService)) {
-            $data['id'] = $uuid;
-            $subService::getInstance($uuid)->saveRam($data);
+        // 20240121:逐步淘汰，不适应了
+        // 20240411:增加pin淘汰
+        if($orderType!='bao' && $orderType!='pin'){
+            //②写入订单子表
+            $subService = self::getSubService($data['order_type']);
+            if ($data['order_type'] && class_exists($subService)) {
+                $data['id'] = $uuid;
+                $subService::getInstance($uuid)->saveRam($data);
+            }
+            // 20230530:eService:准备替代上述subService方法
+            $eService = self::getEService($data['order_type']);
+            if ($eService && class_exists($eService)) {
+                $eService::saveRam($data);
+            }
         }
-
-        // 20230530:eService:准备替代上述subService方法
-        $eService = self::getEService($data['order_type']);
-        if ($eService && class_exists($eService)) {
-            $eService::saveRam($data);
-        }
+        
         /*
           //20220622:更新订单的关联账单(含收付)
           self::getInstance($uuid)->updateFinanceStatementRam();
@@ -235,6 +265,7 @@ trait TriggerTraits{
         DataCheck::must($data, ['user_id']);
         // self::checkFinanceTimeLock(Arrays::value($data, 'plan_start_time'));
         self::checkFinanceTimeLockWithOrderType(Arrays::value($data, 'plan_start_time'), Arrays::value($data, 'order_type'));
+        // 防止未绑定账号的用户下单，导致无法联系到人,程序应在下单前，让用户进行绑定动作
         UserService::getInstance($data['user_id'])->checkUserPhone();
         //20210812，测到金额bug注释:由::order方法控制
         $goodsId = Arrays::value($data, 'goods_id');
@@ -260,7 +291,6 @@ trait TriggerTraits{
         if (Arrays::value($data, 'customer_id') && Arrays::value($data, 'user_id')) {
             CustomerUserService::bind($data['customer_id'], $data['user_id']);
         }
-
         return $data;
     }
 
@@ -269,9 +299,13 @@ trait TriggerTraits{
      * @throws Exception
      */
     public function ramPreDelete() {
+        // 20231031:验证账单是否能删
+        $this->checkCanDelete();
+
         $info = $this->get();
         $classStr = self::orderTypeClass($info['order_type']);
-        if (class_exists($classStr)) {
+        // 20231123:增加method_exists($classStr, 'uniDelete')
+        if (class_exists($classStr) && method_exists($classStr, 'uniDelete')) {
             //20220623:关联删除
             $classStr::getInstance($this->uuid)->uniDelete();
         }
@@ -329,7 +363,7 @@ trait TriggerTraits{
     public function ramAfterDelete() {
         // 删流程
         $con[] = ['order_id', '=', $this->uuid];
-        $nodeLists = OrderService::getInstance($this->uuid)->objAttrsList('orderFlowNode');
+        $nodeLists = self::getInstance($this->uuid)->objAttrsList('orderFlowNode');
         foreach ($nodeLists as $v) {
             OrderFlowNodeService::getInstance($v['id'])->deleteRam();
         }
@@ -351,8 +385,8 @@ trait TriggerTraits{
             OrderGoodsService::getInstance($id)->deleteRam();
         }
     }
-    
-        /**
+
+    /**
      * 额外输入信息
      */
     public static function extraPreSave(&$data, $uuid) {
@@ -386,10 +420,90 @@ trait TriggerTraits{
         }
         //
         Debug::debug(__CLASS__ . __FUNCTION__, $data);
-
+        // 20240309:增加订单号
+        $data['order_sn'] = self::newSn($data);
         return $data;
     }
+    /**
+     * 20240309:获取新的包车单号
+     * @param type $data    下单数据：包含订单类型；部门等信息
+     * @return type
+     */
+    public static function newSn($data){
+        $orderType  = Arrays::value($data, 'order_type');
+        $deptId     = Arrays::value($data, 'dept_id');
+        $createTime = Arrays::value($data, 'create_time') ? : date('Y-m-d H:i:s');
+        
+        // 
+        $companyId  = Arrays::value($data, 'company_id') ? : session(SESSION_COMPANY_ID);
+        $prefix     = SystemCompanyService::getInstance($companyId)->fCompanyNo();
 
+        $deptCode   = $deptId 
+                ? SystemCompanyDeptService::getInstance($deptId)->fDeptCode()
+                :'';
+
+        // $oType = ucfirst(mb_substr($orderType, 0, 1));
+        // 包车；拼团
+        $oTypeCovArr = ['bao'=>'B','pin'=>'P'];
+        $oType = Arrays::value($oTypeCovArr, $orderType) ;
+
+        $date = date('Ymd',strtotime($createTime));
+        // 提取本次下单的流水号
+        $serCode = self::dailyThisSnNo($data);
+        // 20240309:观察一下
+//        if($orderType == 'pin'){
+//            $date .= Strings::rand(4);
+//        }
+        
+        return $prefix.$deptCode.$oType.$date.$serCode;
+    }
+
+    public static function dailyLastSn($data){
+        $orderType  = Arrays::value($data, 'order_type');
+        $deptId     = Arrays::value($data, 'dept_id');
+        $createTime = Arrays::value($data, 'create_time') ? : date('Y-m-d H:i:s');
+
+        $con        = [];
+        $con[]      = ['order_type','=',$orderType];
+        if($deptId){
+            $con[]      = ['dept_id','=',$deptId];
+        }
+        $con[]      = ['order_type','=',$orderType];
+
+        $con[]      = ['create_time','>=',date('Y-m-d 00:00:00',strtotime($createTime))];
+        $con[]      = ['create_time','<=',date('Y-m-d 23:59:59',strtotime($createTime))];
+
+        $lastSn = self::where($con)->order('order_sn desc')->value('order_sn');
+        return $lastSn;
+    }
+    /**
+     * 本次流水号
+     * @param type $data
+     * @return type
+     */
+    public static function dailyThisSnNo($data, $length = 4){
+        $lastSn = self::dailyLastSn($data);
+        // Debug::dump($data);
+        $number = $lastSn ? intval(substr($lastSn,-4)) : 0;
+        return Strings::preKeepLength($number + 1, $length);
+    }
+    /*
+    public static function testOp($param){
+        $lists = self::where()->whereNull('order_sn')->order('create_time')->limit(1000)->select();
+        foreach($lists as $v){
+            $oSn = self::newSn($v);
+            self::getInstance($v['id'])->doUpdateRam(['order_sn'=>$oSn]);
+            DbOperate::dealGlobal();
+        }        
+    }
+     */
+    /**
+     * 
+     * @param type $data
+     * @param type $uuid
+     * @return type
+     * @throws Exception
+     */
     public static function extraPreUpdate(&$data, $uuid) {
         self::checkTransaction();
         $info = self::getInstance($uuid)->get();
@@ -398,15 +512,15 @@ trait TriggerTraits{
         $diffInfo = Arrays::diffArr($info, $data);
         $diffKeys = array_keys($diffInfo);
         //财务锁账字段
-        $fLockKeys = ['customer_id','user_id','dept_id','shop_id','plan_start_time'
-            ,'order_type','goods_id','order_prize','seller_user_id','seller_customer_id'];
-        if(array_intersect($diffKeys,$fLockKeys)){
+        $fLockKeys = ['customer_id', 'user_id', 'dept_id', 'shop_id', 'plan_start_time'
+            , 'order_type', 'goods_id', 'order_prize', 'seller_user_id', 'seller_customer_id'];
+        if (array_intersect($diffKeys, $fLockKeys)) {
             self::checkFinanceTimeLockWithOrderType(Arrays::value($info, 'plan_start_time'), $info['order_type']);
             if (Arrays::value($data, 'plan_start_time')) {
                 self::checkFinanceTimeLockWithOrderType(Arrays::value($data, 'plan_start_time'), $info['order_type']);
             }
         }
-        
+
         if (isset($data['is_cancel']) && $data['is_cancel'] && $data['is_cancel'] != $info['is_cancel']) {
             if ($info['is_complete']) {
                 throw new Exception('已结订单不可取消' . $uuid);
@@ -423,5 +537,12 @@ trait TriggerTraits{
         }
         OrderChangeLogService::log('orderChange', $uuid, '', $diffInfo);
         return $data;
+    }
+
+    /**
+     * 验证账单是否能删
+     */
+    protected function checkCanDelete() {
+        
     }
 }

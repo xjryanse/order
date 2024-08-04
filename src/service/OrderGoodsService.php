@@ -17,7 +17,13 @@ class OrderGoodsService {
 
     use \xjryanse\traits\InstTrait;
     use \xjryanse\traits\MainModelTrait;
+    use \xjryanse\traits\MainModelRamTrait;
+    use \xjryanse\traits\MainModelCacheTrait;
+    use \xjryanse\traits\MainModelCheckTrait;
+    use \xjryanse\traits\MainModelGroupTrait;
     use \xjryanse\traits\MainModelQueryTrait;
+
+    use \xjryanse\traits\ObjectAttrTrait;
     use \xjryanse\traits\SubServiceTrait;
 
     protected static $mainModel;
@@ -171,15 +177,15 @@ class OrderGoodsService {
     public static function extraDetails($ids) {
         return self::commExtraDetails($ids, function($lists) use ($ids) {
 
-                    $orderCount = OrderService::groupBatchCount('id', array_column($lists, 'order_id'));
+                    // $orderCount = OrderService::groupBatchCount('id', array_column($lists, 'order_id'));
 
                     foreach ($lists as &$v) {
                         //消息发送数
-                        $v['isOrderExist'] = Arrays::value($orderCount, $v['order_id'], 0);
+                        // $v['isOrderExist'] = Arrays::value($orderCount, $v['order_id'], 0);
                     }
 
                     return $lists;
-                });
+                },true);
     }
 
     /**

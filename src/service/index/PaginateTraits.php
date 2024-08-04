@@ -7,7 +7,12 @@ use xjryanse\order\service\OrderGoodsService;
 use xjryanse\system\service\SystemFileService;
 use xjryanse\logic\Arrays;
 use xjryanse\logic\Arrays2d;
+use xjryanse\logic\DbOperate;
+use xjryanse\logic\Datetime;
 use xjryanse\logic\Cachex;
+use xjryanse\logic\ModelQueryCon;
+use think\facade\Request; 
+use think\Db;
 // 20220906兼容前端，排车页面，是否有更优方案？？
 
 /**
@@ -100,4 +105,82 @@ trait PaginateTraits{
         // 查询条件单拎；适用于后台管理（客户权限，业务员权限）
         return self::paginateRaw($conAll, $order, $perPage, $having, $field, $withSum);
     }
+    /**
+     * 包车分页:
+     * 用于前台展示
+     * 20240129：淘汰，用
+     * /admin/SSql/paginate?sqlKey=orderBaoBus 替代
+     * 
+     */
+//    public static function paginateOrderBao(){
+//        $param = Request::param('table_data') ? : Request::param();
+//        $fields['equal'] = ['order_id', 'customer_id', 'user_id','busier_id','need_invoice','sub_order_type','bus_id','bus_type_id'];
+//        $con        = ModelQueryCon::queryCon($param, $fields);
+//        $timeArr    = Datetime::paramScopeTime($param);
+//        if($timeArr){
+//            $con[]  = ['start_time','>=',$timeArr[0]];
+//            $con[]  = ['start_time','<=',$timeArr[1]];
+//        }
+//
+//        $table      = self::baoBusSql();
+//        $res = Db::table($table)->where($con)->paginate(50);
+//        $resp = $res ? $res->toArray() : [];
+//
+//        
+//        $sumFields          = DbOperate::sumFieldStr(['prize','pay_prize','remainNeedPay']);
+//        $resp['withSum']    = 1;
+//        $resp['sumData']    = Db::table($table)->where($con)->field($sumFields)->find();
+//
+//        return $resp;
+//    }
+    
+//    private static function baoBusSql(){
+//        $arr[]      = ['table_name'=>'w_order','alias'=>'tA'];
+//        $arr[]      = ['table_name'=>'w_order_bao_bus','alias'=>'tB','join_type'=>'inner','on'=>'tA.id=tB.order_id'];
+//        $driverSql  = self::baoBusDriverSql();
+//        $arr[]      = ['table_name'=>$driverSql,'alias'=>'tC','join_type'=>'left','on'=>'tB.id=tC.bao_bus_id'];
+//
+//        $fields     = [];
+//        $fields[]   = 'tB.id';
+//        $fields[]   = 'tB.order_id';
+//
+//        $fields[]   = 'tA.customer_id';
+//        $fields[]   = 'tA.user_id';
+//        $fields[]   = 'tA.busier_id';
+//        $fields[]   = 'tA.need_invoice';
+//        $fields[]   = 'tA.order_desc';
+//        $fields[]   = 'tA.remark as orderRemark';
+//        $fields[]   = 'tA.sub_order_type';
+//
+//        $fields[]   = 'tB.bus_id';
+//        $fields[]   = 'tB.bus_type_id';
+//        $fields[]   = 'tB.prize';
+//        $fields[]   = 'tB.start_time';
+//        $fields[]   = 'tB.end_time';
+//        $fields[]   = 'tB.pay_prize';
+//        $fields[]   = 'tB.remainNeedPay';
+//        $fields[]   = 'tB.route';
+//        
+//        $fields[]   = 'tC.driverNames';
+//        
+//        
+//        $tableSql   = DbOperate::generateJoinSql($fields, $arr);
+//        $table      = '('.$tableSql.') as mainTable';
+//        return $table;
+//    }
+    
+//    private static function baoBusDriverSql(){
+//        $arr[] = ['table_name'=>'w_order_bao_bus_driver','alias'=>'tA'];
+//        $arr[] = ['table_name'=>'w_user','alias'=>'tB','join_type'=>'inner','on'=>'tA.driver_id=tB.id'];
+//
+//        $fields     = [];
+//        $fields[]   = 'tA.bao_bus_id';
+//        $fields[]   = 'group_concat(tB.realname) as driverNames';
+//        
+//        $groupFields = ['tA.bao_bus_id'];
+//
+//        $tableSql   = DbOperate::generateJoinSql($fields, $arr, $groupFields);
+//        return '('.$tableSql.')';
+//    }
+    
 }
